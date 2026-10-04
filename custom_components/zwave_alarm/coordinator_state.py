@@ -1,7 +1,7 @@
 """Pure state-application and backoff helpers for the WebSocket coordinator (T039).
 
 Split out of coordinator.py for the same reason panel_state.py/zone_state.py/
-fault_state.py were split out of their entity modules (see api.py's module
+fault_state.py were split out of their entity modules (see the README's "Testing" note
 docstring): the `homeassistant` package can't be installed in this
 environment, so anything worth unit testing has to avoid importing it --
 coordinator.py itself subclasses `homeassistant.helpers.update_coordinator.

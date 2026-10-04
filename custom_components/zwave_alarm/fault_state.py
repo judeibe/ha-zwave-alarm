@@ -2,7 +2,7 @@
 
 Split out of sensor.py for the same reason zone_state.py/panel_state.py were
 split out of binary_sensor.py/alarm_control_panel.py: the `homeassistant`
-package can't be installed in this environment (see api.py's module
+package can't be installed in this environment (see the README's "Testing" note
 docstring), so any logic worth unit testing has to avoid importing it.
 """
 

@@ -3,9 +3,9 @@
   "name": "Z-Wave Alarm",
   "version": "1.0.0",
   "config_flow": true,
-  "documentation": "https://github.com/judeibe/zwave_alarm/tree/main/ha-integration",
-  "issue_tracker": "https://github.com/judeibe/zwave_alarm/issues",
-  "requirements": [],
+  "documentation": "https://github.com/judeibe/ha-zwave-alarm",
+  "issue_tracker": "https://github.com/judeibe/ha-zwave-alarm/issues",
+  "requirements": ["zwave-alarm-client==0.1.0"],
   "codeowners": ["@judeibe"],
   "iot_class": "local_push"
 }

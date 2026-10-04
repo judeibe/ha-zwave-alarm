@@ -4,7 +4,7 @@ alarm_control_panel state strings.
 Split out from alarm_control_panel.py so it can be unit tested without Home
 Assistant installed: the `homeassistant` package's dependency pins are
 incompatible with this repo's Python version (same constraint noted in
-api.py / T035's completion note), so anything worth testing here avoids
+the README's "Testing" note), so anything worth testing here avoids
 importing it.
 """
 

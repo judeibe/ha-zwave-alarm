@@ -12,7 +12,7 @@ against it, instead of each one polling independently.
 The event-application and backoff-delay logic lives in coordinator_state.py
 so it's unit-testable without Home Assistant installed; this module itself
 is only verifiable here via `py_compile`/wheel-source inspection (see
-api.py's module docstring for why `homeassistant` can't be imported in this
+the README's "Testing" note for why `homeassistant` can't be imported in this
 environment).
 """
 

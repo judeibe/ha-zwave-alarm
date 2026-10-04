@@ -30,7 +30,7 @@ from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import api
+import zwave_alarm_client as api
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .zone_state import zone_is_breached, zone_sensor_attributes

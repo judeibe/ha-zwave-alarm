@@ -36,7 +36,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import api
+import zwave_alarm_client as api
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .coordinator_state import StreamState, merge_panel
@@ -110,7 +110,7 @@ class ZwaveAlarmControlPanel(
     async def _async_call(
         self, func: Callable[..., Awaitable[dict[str, Any]]], **kwargs: Any
     ) -> None:
-        """Invoke an api.py arm/disarm call and feed the returned AlarmPanel state into the coordinator.
+        """Invoke a zwave_alarm_client arm/disarm call and feed the returned AlarmPanel state into the coordinator.
 
         Updating the coordinator (rather than just this entity) makes the
         result visible immediately, without waiting for the WebSocket's own

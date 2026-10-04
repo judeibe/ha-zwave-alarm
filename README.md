@@ -1,6 +1,12 @@
-# Z-Wave Alarm — Home Assistant Custom Component
+# Z-Wave Alarm for Home Assistant
 
-This directory contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.
+Custom component for the [Z-Wave Alarm service](https://github.com/judeibe/zwave_alarm). Install through [HACS](https://hacs.xyz) as a custom repository (category: Integration) or copy `custom_components/zwave_alarm` into your Home Assistant config directory.
+
+It talks to the service through the [`zwave-alarm-client`](https://github.com/judeibe/zwave-alarm-client) package (installed automatically from PyPI via `manifest.json`), so client fixes ship without a component change.
+
+**Testing:** the state-logic modules (`*_state.py`) avoid importing `homeassistant` so `pytest` runs without a Home Assistant install. HTTP client tests live in the client repo.
+
+This repo contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.
 
 Installation and config-flow setup are covered in `specs/001-zwave-alarm-ha-integration/quickstart.md`, section 4. This README covers the remote-notification pattern from **FR-013**.
 

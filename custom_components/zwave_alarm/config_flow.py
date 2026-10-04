@@ -16,7 +16,7 @@ from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import CannotConnect, InvalidAuth, async_validate_connection
+from zwave_alarm_client import CannotConnect, InvalidAuth, async_validate_connection
 from .const import DEFAULT_PORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
