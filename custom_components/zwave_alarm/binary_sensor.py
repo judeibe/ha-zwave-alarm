@@ -23,17 +23,14 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-import zwave_alarm_client as api
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
-from .zone_state import zone_is_breached, zone_sensor_attributes
+from .zone_state import zone_is_breached, zone_is_disarmed, zone_sensor_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,23 +38,27 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Create one binary_sensor per zone found via `GET /api/v1/zones`."""
-    coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
-    session = async_get_clientsession(hass)
-    host, port, token = entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_ACCESS_TOKEN]
-    try:
-        zones = await api.async_get_zones(session, host, port, token)
-    except (api.CannotConnect, api.InvalidAuth):
-        # This one-time enumeration call is only used to decide which zone
-        # entities to create; the coordinator (T039) independently retries
-        # its own connection with backoff regardless of whether this
-        # succeeds. Nothing to create entities for if it fails here.
-        _LOGGER.warning("Could not fetch zones from the Z-Wave Alarm service; no zone sensors created")
-        return
+    """Create one binary_sensor per zone in the coordinator's data, including zones added later.
 
-    async_add_entities(
-        ZwaveAlarmZoneBinarySensor(coordinator, entry, zone["id"], zone["name"]) for zone in zones
-    )
+    Zones arrive with the first `snapshot` (or a zone refresh after an unknown
+    sensor event), not at setup, so a listener adds an entity the first time
+    each zone id shows up.
+    """
+    coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
+    known_zone_ids: set[str] = set()
+
+    @callback
+    def _add_new_zones() -> None:
+        if coordinator.data is None:
+            return
+        new_zones = [zone for zone in coordinator.data.zones if zone["id"] not in known_zone_ids]
+        known_zone_ids.update(zone["id"] for zone in new_zones)
+        async_add_entities(
+            ZwaveAlarmZoneBinarySensor(coordinator, entry, zone["id"], zone["name"]) for zone in new_zones
+        )
+
+    _add_new_zones()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_zones))
 
 
 class ZwaveAlarmZoneBinarySensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
@@ -107,4 +108,13 @@ class ZwaveAlarmZoneBinarySensor(CoordinatorEntity[ZwaveAlarmCoordinator], Binar
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         zone = self._zone()
-        return {"sensors": zone_sensor_attributes(zone)} if zone is not None else None
+        if zone is None:
+            return None
+        panel = self.coordinator.data.panel
+        return {
+            "sensors": zone_sensor_attributes(zone),
+            # A zone-restricted guest disarmed just this zone (FR-010a): its
+            # intrusion breaches are ignored until the panel is next fully
+            # disarmed or armed.
+            "disarmed": zone_is_disarmed(self._zone_id, panel),
+        }

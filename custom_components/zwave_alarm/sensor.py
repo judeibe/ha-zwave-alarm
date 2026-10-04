@@ -28,7 +28,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
-from .fault_state import count_faulted_sensors
+from .fault_state import count_faulted_sensors, faulted_sensors
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,3 +71,10 @@ class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], Senso
         if self.coordinator.data is None:
             return None
         return count_faulted_sensors(self.coordinator.data.zones)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict]] | None:
+        """Which sensors are faulted, in which zone, and why (offline / low battery)."""
+        if self.coordinator.data is None:
+            return None
+        return {"sensors": faulted_sensors(self.coordinator.data.zones)}

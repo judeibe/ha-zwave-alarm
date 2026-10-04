@@ -19,10 +19,10 @@ from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 
-PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "sensor"]
+PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -35,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data[CONF_HOST],
         entry.data[CONF_PORT],
         entry.data[CONF_ACCESS_TOKEN],
+        entry.data.get(CONF_SSL, False),
     )
     coordinator.async_start(entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator

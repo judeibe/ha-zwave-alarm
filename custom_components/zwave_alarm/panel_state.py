@@ -30,3 +30,21 @@ def map_panel_mode(mode: str) -> str:
         return _MODE_TO_STATE[mode]
     except KeyError as err:
         raise ValueError(f"Unknown AlarmPanel mode: {mode!r}") from err
+
+
+def panel_attributes(panel: dict, zones: list[dict]) -> dict:
+    """Extra state attributes for the alarm_control_panel entity.
+
+    `disarmed_zones` lists the zones a zone-restricted guest has disarmed
+    while the panel stays armed (FR-010a); `triggered_by` names the zone and
+    sensor behind the current alarm, when the service reported one.
+    """
+    names = {zone["id"]: zone["name"] for zone in zones}
+    triggered_by = panel.get("triggeredBy") or {}
+    return {
+        "armed_mode": panel.get("armedMode"),
+        "pending_delay_ends_at": panel.get("pendingDelayEndsAt"),
+        "disarmed_zones": [names.get(zone_id, zone_id) for zone_id in panel.get("disarmedZoneIds") or []],
+        "triggered_by_zone": names.get(triggered_by.get("zoneId"), triggered_by.get("zoneId")),
+        "triggered_by_sensor_id": triggered_by.get("sensorId"),
+    }

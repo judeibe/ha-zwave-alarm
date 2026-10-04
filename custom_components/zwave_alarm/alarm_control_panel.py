@@ -32,15 +32,15 @@ from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 import zwave_alarm_client as api
-from .const import DOMAIN
+from .const import CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .coordinator_state import StreamState, merge_panel
-from .panel_state import map_panel_mode
+from .panel_state import map_panel_mode, panel_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +74,11 @@ class ZwaveAlarmControlPanel(
         self._host: str = entry.data[CONF_HOST]
         self._port: int = entry.data[CONF_PORT]
         self._token: str = entry.data[CONF_ACCESS_TOKEN]
+        self._secure: bool = entry.data.get(CONF_SSL, False)
         self._attr_unique_id = f"{entry.entry_id}_panel"
+        # Explicit entity_id so it is the contract's `alarm_control_panel.zwave_alarm`
+        # rather than the slug of the device name (`z_wave_alarm`).
+        self.entity_id = async_generate_entity_id("alarm_control_panel.{}", "zwave_alarm", hass=coordinator.hass)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name="Z-Wave Alarm",
@@ -92,6 +96,14 @@ class ZwaveAlarmControlPanel(
             if panel is not None
             else None
         )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Armed mode, pending delay, zones a zone-restricted guest disarmed, and what triggered the alarm."""
+        data = self.coordinator.data
+        if data is None or data.panel is None:
+            return None
+        return panel_attributes(data.panel, data.zones)
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Arm away via `POST /api/v1/panel/arm`."""
@@ -119,7 +131,9 @@ class ZwaveAlarmControlPanel(
         """
         session = async_get_clientsession(self.hass)
         try:
-            panel = await func(session, self._host, self._port, self._token, **kwargs)
+            panel = await func(
+                session, self._host, self._port, self._token, secure=self._secure, **kwargs
+            )
         except api.InvalidAuth as err:
             raise ServiceValidationError(
                 "The Z-Wave Alarm service rejected the Home Assistant token or code."
@@ -127,6 +141,14 @@ class ZwaveAlarmControlPanel(
         except api.AccountLocked as err:
             raise HomeAssistantError(
                 "This account is locked from repeated invalid codes. Try again later."
+            ) from err
+        except api.Forbidden as err:
+            raise HomeAssistantError(
+                "The Z-Wave Alarm service does not allow this action for the Home Assistant link."
+            ) from err
+        except api.TooManyRequests as err:
+            raise HomeAssistantError(
+                "The Z-Wave Alarm service is rate limiting requests. Try again shortly."
             ) from err
         except api.CommandRejected as err:
             raise HomeAssistantError(
@@ -136,6 +158,8 @@ class ZwaveAlarmControlPanel(
             raise HomeAssistantError(
                 "Could not reach the Z-Wave Alarm service."
             ) from err
+        except api.ZwaveAlarmError as err:
+            raise HomeAssistantError(f"The Z-Wave Alarm service rejected the request: {err}") from err
 
         current = (
             self.coordinator.data

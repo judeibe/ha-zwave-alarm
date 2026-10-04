@@ -27,3 +27,8 @@ def zone_sensor_attributes(zone: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": sensor["name"], "category": sensor["category"], "state": sensor["currentState"]}
         for sensor in zone["sensors"]
     ]
+
+
+def zone_is_disarmed(zone_id: str, panel: dict | None) -> bool:
+    """True while a zone-restricted guest has disarmed this zone though the panel stays armed (FR-010a)."""
+    return panel is not None and zone_id in (panel.get("disarmedZoneIds") or [])

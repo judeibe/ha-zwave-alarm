@@ -30,3 +30,20 @@ def sensor_is_faulted(sensor: dict[str, Any]) -> bool:
 def count_faulted_sensors(zones: list[dict[str, Any]]) -> int:
     """Count of sensors currently reporting a fault, across all zones (ha-custom-component.md)."""
     return sum(1 for zone in zones for sensor in zone["sensors"] if sensor_is_faulted(sensor))
+
+
+def faulted_sensors(zones: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The faulted sensors with their zone and fault reasons, for the fault-count sensor's attributes (FR-012)."""
+    result = []
+    for zone in zones:
+        for sensor in zone["sensors"]:
+            if not sensor_is_faulted(sensor):
+                continue
+            reasons = []
+            if sensor["connectivityStatus"] == "offline":
+                reasons.append("offline")
+            battery_level = sensor["batteryLevel"]
+            if battery_level is not None and battery_level <= LOW_BATTERY_THRESHOLD_PERCENT:
+                reasons.append("low_battery")
+            result.append({"name": sensor["name"], "zone": zone["name"], "reasons": reasons})
+    return result
