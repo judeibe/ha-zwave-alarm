@@ -59,7 +59,17 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
     if event_type == "panel.changed":
         if state.panel is None:
             return state
-        panel = {**state.panel, "mode": event["mode"], "pendingDelayEndsAt": event["pendingDelayEndsAt"]}
+        panel = {
+            **state.panel,
+            "mode": event["mode"],
+            "pendingDelayEndsAt": event["pendingDelayEndsAt"],
+            "disarmedZoneIds": event.get("disarmedZoneIds", []),
+            "triggeredBy": event.get("triggeredBy"),
+        }
+        # `armedMode` is only on the REST panel, not the push channel; a mode
+        # change that leaves the armed family makes any earlier value stale.
+        if event["mode"] == "disarmed":
+            panel["armedMode"] = None
         return replace(state, panel=panel)
 
     if event_type == "sensor.changed":
@@ -76,11 +86,39 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             sensor["batteryLevel"] = event["batteryLevel"]
         return state
 
-    # `event.recorded` carries no panel/zone/sensor state for the T036-T038
-    # entities to reflect, and any future event type this client doesn't yet
-    # recognize is ignored rather than raising -- matching src/api/ws.ts's
-    # own "ignore unrecognized messages" precedent for this read-only channel.
+    # `event.recorded` carries no panel/zone/sensor state (the coordinator
+    # forwards it to the event entity instead), and any future event type this
+    # client doesn't yet recognize is ignored rather than raising -- matching
+    # src/api/ws.ts's own "ignore unrecognized messages" precedent for this
+    # read-only channel.
     return state
+
+
+def references_unknown_sensor(state: StreamState, event: dict[str, Any]) -> bool:
+    """True when a `sensor.changed`/`sensor.fault` names a sensor absent from `state.zones`.
+
+    The push channel has no zone/sensor "created" event, so this is the signal
+    that an administrator added a sensor (or zone) after the last snapshot and
+    the zone list must be re-fetched.
+    """
+    if event.get("type") not in ("sensor.changed", "sensor.fault"):
+        return False
+    return _find_sensor(state.zones, event["sensorId"]) is None
+
+
+def security_event_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Split an `event.recorded` event into `(event_type, attributes)` for the HA event entity.
+
+    `details` carries e.g. "Cleared by <name>" on `alarm_cleared`, which is
+    how an automation tells recipients the alarm was cleared and by whom
+    (User Story 3).
+    """
+    recorded = event["event"]
+    return recorded["type"], {
+        "event_id": recorded.get("id"),
+        "occurred_at": recorded.get("occurredAt"),
+        "details": recorded.get("details"),
+    }
 
 
 def merge_panel(state: StreamState, panel: dict[str, Any]) -> StreamState:
@@ -90,4 +128,13 @@ def merge_panel(state: StreamState, panel: dict[str, Any]) -> StreamState:
     arm/disarm call, so the UI reflects the change immediately rather than
     waiting for the WebSocket's own `panel.changed` echo of the same change.
     """
-    return replace(state, panel={"mode": panel["mode"], "pendingDelayEndsAt": panel.get("pendingDelayEndsAt")})
+    return replace(
+        state,
+        panel={
+            "mode": panel["mode"],
+            "pendingDelayEndsAt": panel.get("pendingDelayEndsAt"),
+            "armedMode": panel.get("armedMode"),
+            "disarmedZoneIds": panel.get("disarmedZoneIds", []),
+            "triggeredBy": panel.get("triggeredBy"),
+        },
+    )

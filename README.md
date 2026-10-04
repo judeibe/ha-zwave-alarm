@@ -4,7 +4,18 @@ Custom component for the [Z-Wave Alarm service](https://github.com/judeibe/zwave
 
 It talks to the service through the [`zwave-alarm-client`](https://github.com/judeibe/zwave-alarm-client) package (installed automatically from PyPI via `manifest.json`), so client fixes ship without a component change.
 
-**Testing:** the state-logic modules (`*_state.py`) avoid importing `homeassistant` so `pytest` runs without a Home Assistant install. HTTP client tests live in the client repo.
+**Testing:** `pip install -r requirements-test.txt && pytest` (Python 3.13). `tests/test_integration.py` boots a real Home Assistant against a fake service (REST + WebSocket); the `*_state.py` modules hold the pure logic and are also unit tested without Home Assistant. HTTP client tests live in the client repo.
+
+## Entities
+
+| Entity | Purpose |
+|---|---|
+| `alarm_control_panel.zwave_alarm` | Arm away/home and disarm (code required). Attributes: `armed_mode`, `pending_delay_ends_at`, `disarmed_zones`, `triggered_by_zone`, `triggered_by_sensor_id`. |
+| `binary_sensor.zwave_alarm_zone_<zone>` | `on` while any sensor in the zone is breached; one per zone, including zones added after setup. Attributes: `sensors` (name, category, state) and `disarmed` (a zone-restricted guest disarmed this zone, FR-010a). |
+| `sensor.zwave_alarm_fault_count` | Sensors offline or low on battery; attribute `sensors` lists each with its zone and reason. |
+| `event.zwave_alarm_security_events` | One event per `SecurityEvent` the service records (`armed`, `disarmed`, `breach`, `alarm_triggered`, `alarm_cleared`, `device_fault`, `lockout`, `guest_code_used`), with `details` such as "Cleared by Owner". |
+
+All entities go `unavailable` while the service is unreachable (never `disarmed`). A rejected token starts Home Assistant's re-authentication flow. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 
 This repo contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.
 
@@ -68,4 +79,20 @@ actions:
 mode: single
 ```
 
-The Home Assistant entity itself only exposes the current `alarm_control_panel` state, not the underlying `SecurityEvent`'s `details` field — for the exact "cleared, and by whom" text, query `GET /api/v1/events?limit=1` on the alarm service directly (e.g. with a `rest` sensor or `rest_command`, or from the native dashboard) rather than the automation trigger above.
+The `alarm_control_panel` state alone doesn't say who cleared the alarm; use the security event entity instead, which carries that text in its `details` attribute:
+
+```yaml
+alias: "Z-Wave Alarm: notify who cleared it"
+triggers:
+  - trigger: state
+    entity_id: event.zwave_alarm_security_events
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.attributes.event_type == 'alarm_cleared' }}"
+actions:
+  - action: notify.mobile_app_your_phone # replace with your Companion App notify service
+    data:
+      title: "Alarm Cleared"
+      message: "{{ trigger.to_state.attributes.details }}"
+mode: queued
+```

@@ -14,6 +14,8 @@ from coordinator_state import (  # noqa: E402
     apply_event,
     merge_panel,
     next_backoff,
+    references_unknown_sensor,
+    security_event_payload,
 )
 
 
@@ -53,7 +55,39 @@ def test_panel_changed_updates_mode_and_pending_delay() -> None:
 
     new_state = apply_event(state, event)
 
-    assert new_state.panel == {"mode": "armed_away", "pendingDelayEndsAt": None}
+    assert new_state.panel == {
+        "mode": "armed_away",
+        "pendingDelayEndsAt": None,
+        "disarmedZoneIds": [],
+        "triggeredBy": None,
+    }
+
+
+def test_panel_changed_carries_disarmed_zones_and_trigger() -> None:
+    state = StreamState(panel={"mode": "armed_away", "pendingDelayEndsAt": None, "disarmedZoneIds": []}, zones=[])
+    trigger = {"sensorId": "s1", "zoneId": "z2"}
+    event = {
+        "type": "panel.changed",
+        "mode": "alarm_triggered",
+        "pendingDelayEndsAt": None,
+        "disarmedZoneIds": ["z1"],
+        "triggeredBy": trigger,
+    }
+
+    panel = apply_event(state, event).panel
+
+    assert panel["disarmedZoneIds"] == ["z1"]
+    assert panel["triggeredBy"] == trigger
+
+
+def test_panel_changed_to_disarmed_clears_armed_mode() -> None:
+    state = StreamState(panel={"mode": "armed_home", "armedMode": "armed_home", "disarmedZoneIds": ["z1"]}, zones=[])
+    event = {"type": "panel.changed", "mode": "disarmed", "pendingDelayEndsAt": None, "disarmedZoneIds": []}
+
+    panel = apply_event(state, event).panel
+
+    assert panel["armedMode"] is None
+    assert panel["disarmedZoneIds"] == []
 
 
 def test_panel_changed_is_noop_before_any_snapshot() -> None:
@@ -116,7 +150,24 @@ def test_merge_panel_overwrites_mode_and_pending_delay() -> None:
 
     new_state = merge_panel(state, {"mode": "armed_away", "pendingDelayEndsAt": None})
 
-    assert new_state.panel == {"mode": "armed_away", "pendingDelayEndsAt": None}
+    assert new_state.panel["mode"] == "armed_away"
+    assert new_state.panel["pendingDelayEndsAt"] is None
+
+
+def test_merge_panel_keeps_zone_restricted_disarm_and_armed_mode() -> None:
+    state = StreamState(panel=None, zones=[])
+    rest_panel = {
+        "mode": "armed_away",
+        "pendingDelayEndsAt": None,
+        "armedMode": "armed_away",
+        "disarmedZoneIds": ["z1"],
+        "triggeredBy": None,
+    }
+
+    panel = merge_panel(state, rest_panel).panel
+
+    assert panel["disarmedZoneIds"] == ["z1"]
+    assert panel["armedMode"] == "armed_away"
 
 
 def test_merge_panel_works_when_no_prior_panel_exists() -> None:
@@ -124,7 +175,29 @@ def test_merge_panel_works_when_no_prior_panel_exists() -> None:
 
     new_state = merge_panel(state, {"mode": "disarmed", "pendingDelayEndsAt": None})
 
-    assert new_state.panel == {"mode": "disarmed", "pendingDelayEndsAt": None}
+    assert new_state.panel["mode"] == "disarmed"
+    assert new_state.panel["disarmedZoneIds"] == []
+
+
+def test_references_unknown_sensor() -> None:
+    state = StreamState(panel=None, zones=[_zone("z1", [_sensor("s1")])])
+
+    assert references_unknown_sensor(state, {"type": "sensor.changed", "sensorId": "new"}) is True
+    assert references_unknown_sensor(state, {"type": "sensor.fault", "sensorId": "new"}) is True
+    assert references_unknown_sensor(state, {"type": "sensor.changed", "sensorId": "s1"}) is False
+    assert references_unknown_sensor(state, {"type": "panel.changed", "mode": "disarmed"}) is False
+
+
+def test_security_event_payload_exposes_details_for_cleared_by() -> None:
+    event = {
+        "type": "event.recorded",
+        "event": {"id": "e1", "type": "alarm_cleared", "occurredAt": 5, "details": "Cleared by Owner"},
+    }
+
+    assert security_event_payload(event) == (
+        "alarm_cleared",
+        {"event_id": "e1", "occurred_at": 5, "details": "Cleared by Owner"},
+    )
 
 
 def test_next_backoff_doubles_from_base_up_to_cap() -> None:

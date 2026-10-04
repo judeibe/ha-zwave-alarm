@@ -7,6 +7,14 @@
         "data": {
           "host": "Host",
           "port": "Port",
+          "access_token": "API Token",
+          "ssl": "Use HTTPS/WSS"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Z-Wave Alarm",
+        "description": "The Z-Wave Alarm service rejected the stored API token. Enter a new token issued via POST /api/v1/ha-links.",
+        "data": {
           "access_token": "API Token"
         }
       }
@@ -16,7 +24,29 @@
       "cannot_connect": "Failed to connect to the Z-Wave Alarm service."
     },
     "abort": {
-      "already_configured": "This Z-Wave Alarm service is already configured."
+      "already_configured": "This Z-Wave Alarm service is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "entity": {
+    "event": {
+      "security_events": {
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "armed": "Armed",
+              "disarmed": "Disarmed",
+              "breach": "Breach",
+              "alarm_triggered": "Alarm triggered",
+              "alarm_cleared": "Alarm cleared",
+              "device_fault": "Device fault",
+              "lockout": "Lockout",
+              "guest_code_used": "Guest code used"
+            }
+          }
+        },
+        "name": "Security events"
+      }
     }
   }
 }
