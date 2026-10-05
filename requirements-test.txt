@@ -1,4 +1,5 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
-zwave-alarm-client>=0.2.0
+zwave-alarm-client @ git+https://github.com/judeibe/zwave-alarm-client@feat/config-panel-endpoints
+home-assistant-frontend

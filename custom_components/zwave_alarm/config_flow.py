@@ -13,11 +13,12 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from zwave_alarm_client import CannotConnect, InvalidAuth, async_validate_connection
-from .const import CONF_SSL, DEFAULT_PORT, DOMAIN
+from .const import CONF_SHOW_IN_SIDEBAR, CONF_SSL, DEFAULT_PORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ class ZwaveAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Z-Wave Alarm."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> ZwaveAlarmOptionsFlow:
+        return ZwaveAlarmOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the (only) step: collect connection details and validate them."""
@@ -95,4 +101,16 @@ class ZwaveAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reauth_confirm", data_schema=STEP_REAUTH_DATA_SCHEMA, errors=errors
+        )
+
+
+class ZwaveAlarmOptionsFlow(config_entries.OptionsFlow):
+    """Options: whether the configuration panel appears in the sidebar."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        current = self.config_entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
+        return self.async_show_form(
+            step_id="init", data_schema=vol.Schema({vol.Required(CONF_SHOW_IN_SIDEBAR, default=current): bool})
         )

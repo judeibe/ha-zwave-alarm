@@ -8,3 +8,6 @@ CONF_SSL = "ssl"
 # The service's default HTTP port (src/config/index.ts's HTTP_PORT); used only
 # to pre-fill the config flow form, not enforced.
 DEFAULT_PORT = 3000
+
+# Options-flow key: show the configuration panel in the sidebar (it stays reachable by URL either way).
+CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"

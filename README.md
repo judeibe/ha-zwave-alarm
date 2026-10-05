@@ -23,6 +23,16 @@ This repo contains `custom_components/zwave_alarm`, the Home Assistant custom co
 
 Installation and config-flow setup are covered in `specs/001-zwave-alarm-ha-integration/quickstart.md`, section 4. This README covers the remote-notification pattern from **FR-013**.
 
+## Configuration panel
+
+Administrators get a **Z-Wave Alarm** sidebar panel (also at `/zwave-alarm`; hide the sidebar entry in the integration's options) to:
+
+- add discovered Z-Wave devices as sensors and move or unassign them,
+- create, rename and delete zones,
+- onboard Home Assistant `person` entities as alarm users and set, replace or clear their codes.
+
+Alarm codes are write-only: they are sent once and never read back, only whether a code is set. The panel and its websocket commands (`zwave_alarm/*`) are admin-only. Needs a Z-Wave Alarm service with the config-panel API.
+
 ## Remote notifications are delegated to Home Assistant (FR-013)
 
 Per `spec.md`'s FR-013 and Clarifications, this service's own responsibility for alarm notification stops at the **local audible siren** — a configured Z-Wave siren/alert device is the authoritative, no-Home-Assistant-required notification (see `src/alarm/siren.ts`). Any additional remote notification (push, SMS, email) is intentionally *not* built into the alarm system itself. Instead, it's delivered through a Home Assistant automation built on top of `alarm_control_panel.zwave_alarm`'s exposed state, once the custom component is installed (User Story 3, Phase 03).
