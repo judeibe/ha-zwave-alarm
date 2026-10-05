@@ -5,12 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      bump:
-        description: Semver part to increment (auto reads the Conventional Commits since the last tag)
-        type: choice
-        options: [auto, patch, minor, major]
-        default: auto
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -62,44 +56,38 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - run: node scripts/lint-commits.mjs ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
 
-  # Derives the next version from the Conventional Commits since the last tag, bumps the manifest version,
-  # tags vX.Y.Z and creates the GitHub release (HACS installs from release tags).
+  # semantic-release: versions from the Conventional Commits, bumps the manifest, tags vX.Y.Z and creates
+  # the GitHub release (HACS installs from release tags).
   release:
     name: Version and tag
+    # Branch protection on main must allow the GITHUB_TOKEN to push the release commit.
     needs: [test, hacs, hassfest]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: write # push the release commit and tag, create the GitHub release
+      issues: write # comment on released issues
+      pull-requests: write # comment on released pull requests
     outputs:
-      tag: ${{ steps.next.outputs.released == 'true' && format('v{0}', steps.next.outputs.version) || '' }}
+      tag: ${{ steps.release.outputs.new_release_git_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-      - id: next
+          fetch-depth: 0 # the commit history and tags decide the version
+          persist-credentials: false # semantic-release authenticates with GITHUB_TOKEN itself
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      # Reads the Conventional Commits since the last tag; if any warrants it, bumps the version files
+      # (release.config.mjs), commits, tags vX.Y.Z and creates the GitHub release.
+      - id: release
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          semantic_version: 24
+          extra_plugins: |
+            conventional-changelog-conventionalcommits@8
+            @semantic-release/exec@7
+            @semantic-release/git@10
         env:
-          BUMP: ${{ inputs.bump || 'auto' }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/next-version.mjs "$BUMP" | tee next.txt
-          bump=$(sed -n 's/^bump=//p' next.txt); version=$(sed -n 's/^version=//p' next.txt); rm next.txt
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          if [ "$bump" = none ]; then
-            echo "No fix, feat or breaking commits since the last tag: nothing to release."
-            echo "released=false" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
-            echo "::error::tag v${version} already exists"; exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ "$bump" != initial ]; then
-            node scripts/set-version.mjs "$version"
-            git commit -am "chore(release): v${version}"
-          fi
-          git tag -a "v${version}" -m "v${version}"
-          git push --atomic origin HEAD:main "v${version}"
-          gh release create "v${version}" --title "v${version}" --generate-notes
-          echo "released=true" >> "$GITHUB_OUTPUT"
+          GITHUB_TOKEN: ${{ github.token }}
