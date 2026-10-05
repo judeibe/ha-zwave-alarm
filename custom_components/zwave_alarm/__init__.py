@@ -14,15 +14,83 @@ WebSocket connection to `wss://<host>/api/v1/stream` and is stored in
 
 from __future__ import annotations
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
-from homeassistant.core import HomeAssistant
+from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_SSL, DOMAIN
+from .const import CAPABILITY_CHIME, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .keypad import keypad_device_identifier
 
 PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "sensor"]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_KEYPAD_CHIME = "keypad_chime"
+ATTR_SOUND = "sound"
+ATTR_VOLUME = "volume"
+KEYPAD_CHIME_SCHEMA = cv.make_entity_service_schema(
+    {
+        vol.Required(ATTR_SOUND): cv.string,
+        vol.Optional(ATTR_VOLUME): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
+    }
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the domain-wide services (they must exist whether or not an entry is loaded)."""
+
+    async def _keypad_chime(call: ServiceCall) -> None:
+        # Targets are a keypad's device, or any of its entities (area/label targets aren't resolved).
+        entity_registry = er.async_get(hass)
+        device_ids = set(cv.ensure_list(call.data.get(ATTR_DEVICE_ID)))
+        for entity_id in cv.ensure_list(call.data.get(ATTR_ENTITY_ID)):
+            if (entity := entity_registry.async_get(entity_id)) is not None and entity.device_id:
+                device_ids.add(entity.device_id)
+
+        targets = []
+        device_registry = dr.async_get(hass)
+        for device_id in sorted(device_ids):
+            device = device_registry.async_get(device_id)
+            if device is None:
+                continue
+            for coordinator in _coordinators(hass):
+                for keypad in coordinator.data.keypads if coordinator.data else []:
+                    if keypad_device_identifier(coordinator.config_entry.entry_id, keypad["nodeId"]) in device.identifiers:
+                        targets.append((coordinator, keypad))
+        if not targets:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="keypad_not_found")
+
+        sound = call.data[ATTR_SOUND]
+        # Validate every target before sending anything, so a bad one doesn't leave a partial chime.
+        for _, keypad in targets:
+            name = keypad.get("label") or f"Keypad {keypad['nodeId']}"
+            if CAPABILITY_CHIME not in keypad.get("capabilities", []):
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN, translation_key="chime_unsupported", translation_placeholders={"keypad": name}
+                )
+            if sound not in keypad.get("chimeSounds", []):
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="chime_sound_unsupported",
+                    translation_placeholders={"keypad": name, "sound": sound},
+                )
+        for coordinator, keypad in targets:
+            await coordinator.async_chime_keypad(keypad["nodeId"], sound, call.data.get(ATTR_VOLUME))
+
+    hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    return True
+
+
+def _coordinators(hass: HomeAssistant) -> list[ZwaveAlarmCoordinator]:
+    return list(hass.data.get(DOMAIN, {}).values())
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

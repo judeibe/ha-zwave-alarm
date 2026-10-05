@@ -1,0 +1,27 @@
+keypad_chime:
+  target:
+    device:
+      integration: zwave_alarm
+  fields:
+    sound:
+      required: true
+      example: doorbell
+      selector:
+        select:
+          options:
+            - double_beep
+            - guitar
+            - wind_chimes
+            - bing_bong
+            - doorbell
+          translation_key: chime_sound
+          custom_value: true
+    volume:
+      required: false
+      example: 60
+      selector:
+        number:
+          min: 0
+          max: 99
+          step: 1
+          mode: slider

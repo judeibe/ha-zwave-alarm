@@ -27,6 +27,7 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 import zwave_alarm_client as api
@@ -39,6 +40,7 @@ from .coordinator_state import (
     references_unknown_sensor,
     security_event_payload,
 )
+from .keypad_state import keypad_event_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         self._token = token
         self._secure = secure
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
+        self._keypad_event_listeners: list[Callable[[int, str, dict[str, Any]], None]] = []
 
     @callback
     def async_add_security_event_listener(
@@ -83,6 +86,42 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             self._event_listeners.remove(listener)
 
         return _remove
+
+    @callback
+    def async_add_keypad_event_listener(
+        self, listener: Callable[[int, str, dict[str, Any]], None]
+    ) -> CALLBACK_TYPE:
+        """Register `listener(node_id, event_type, attributes)` for every `keypad.event`; returns an unsubscribe callback."""
+        self._keypad_event_listeners.append(listener)
+
+        @callback
+        def _remove() -> None:
+            self._keypad_event_listeners.remove(listener)
+
+        return _remove
+
+    async def async_chime_keypad(self, node_id: int, sound: str, volume: int | None = None) -> None:
+        """Play a chime on one keypad via `POST /api/v1/keypads/{nodeId}/chime`, mapping client errors to HA errors."""
+        # `async_chime_keypad` ships in zwave-alarm-client 0.3.0; an older library
+        # still lets the integration load, and only this service reports it.
+        chime = getattr(api, "async_chime_keypad", None)
+        if chime is None:
+            raise HomeAssistantError("The installed zwave-alarm-client does not support keypads; update it.")
+        try:
+            await chime(
+                self._session, self._host, self._port, self._token, node_id, sound,
+                volume=volume, secure=self._secure,
+            )
+        except api.NotFound as err:
+            raise ServiceValidationError(f"Keypad {node_id} was not found on the Z-Wave Alarm service.") from err
+        except api.BadRequest as err:
+            raise ServiceValidationError(f"The Z-Wave Alarm service rejected the chime: {err}") from err
+        except api.InvalidAuth as err:
+            raise HomeAssistantError("The Z-Wave Alarm service rejected the Home Assistant token.") from err
+        except api.CannotConnect as err:
+            raise HomeAssistantError("Could not reach the Z-Wave Alarm service.") from err
+        except api.ZwaveAlarmError as err:
+            raise HomeAssistantError(f"The Z-Wave Alarm service rejected the request: {err}") from err
 
     def async_start(self, entry: ConfigEntry) -> None:
         """Start the persistent connect/read loop as a config-entry-scoped background task.
@@ -138,6 +177,13 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             event_type, attributes = security_event_payload(event)
             for listener in list(self._event_listeners):
                 listener(event_type, attributes)
+            return
+
+        if event["type"] == "keypad.event":
+            payload = keypad_event_payload(event)
+            if payload is not None:
+                for keypad_listener in list(self._keypad_event_listeners):
+                    keypad_listener(*payload)
             return
 
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])

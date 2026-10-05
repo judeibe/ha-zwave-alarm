@@ -24,12 +24,15 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
+from .keypad_state import keypad_is_online
 from .zone_state import zone_is_breached, zone_is_disarmed, zone_sensor_attributes
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +62,10 @@ async def async_setup_entry(
 
     _add_new_zones()
     entry.async_on_unload(coordinator.async_add_listener(_add_new_zones))
+
+    async_add_keypad_entities(
+        coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadConnectivitySensor(c, e, keypad)]
+    )
 
 
 class ZwaveAlarmZoneBinarySensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
@@ -118,3 +125,19 @@ class ZwaveAlarmZoneBinarySensor(CoordinatorEntity[ZwaveAlarmCoordinator], Binar
             # disarmed or armed.
             "disarmed": zone_is_disarmed(self._zone_id, panel),
         }
+
+
+class ZwaveAlarmKeypadConnectivitySensor(ZwaveAlarmKeypadEntity, BinarySensorEntity):
+    """Whether a keypad is reachable, from the snapshot and `keypad.changed`."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "keypad_connectivity"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, keypad: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, keypad, "connectivity")
+
+    @property
+    def is_on(self) -> bool | None:
+        keypad = self._keypad()
+        return keypad_is_online(keypad) if keypad is not None else None
