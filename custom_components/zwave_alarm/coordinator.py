@@ -102,13 +102,8 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
     async def async_chime_keypad(self, node_id: int, sound: str, volume: int | None = None) -> None:
         """Play a chime on one keypad via `POST /api/v1/keypads/{nodeId}/chime`, mapping client errors to HA errors."""
-        # `async_chime_keypad` ships in zwave-alarm-client 0.3.0; an older library
-        # still lets the integration load, and only this service reports it.
-        chime = getattr(api, "async_chime_keypad", None)
-        if chime is None:
-            raise HomeAssistantError("The installed zwave-alarm-client does not support keypads; update it.")
         try:
-            await chime(
+            await api.async_chime_keypad(
                 self._session, self._host, self._port, self._token, node_id, sound,
                 volume=volume, secure=self._secure,
             )

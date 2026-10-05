@@ -25,7 +25,7 @@ Each keypad the service discovers (for example a Ring Keypad v2) becomes its own
 | `binary_sensor.<keypad>_connectivity` | `on` while the keypad is online. |
 | `sensor.<keypad>_battery` | Battery percentage; `unknown` when the keypad doesn't report one. |
 
-The `zwave_alarm.keypad_chime` action plays a chime on the targeted keypad device (or one of its entities) with a `sound` and an optional `volume` from 0 to 99. It needs `zwave-alarm-client` 0.3.0 or later; with an older library the integration still loads and only this action reports the missing support.
+The `zwave_alarm.keypad_chime` action plays a chime on the targeted keypad device (or one of its entities) with a `sound` and an optional `volume` from 0 to 99.
 
 All entities go `unavailable` while the service is unreachable (never `disarmed`). A rejected token starts Home Assistant's re-authentication flow. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 

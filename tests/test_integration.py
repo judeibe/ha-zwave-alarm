@@ -45,6 +45,8 @@ class FakeService:
         self.disarm_response: dict[str, Any] = {"mode": "disarmed", "pendingDelayEndsAt": None}
         self.disarm_calls: list[dict] = []
         self.keypads: list[dict] | None = [copy.deepcopy(KEYPAD)]
+        self.chime_calls: list[dict] = []
+        self.chime_status = 204
 
     def _authorized(self, request: web.Request) -> bool:
         return request.headers.get("Authorization") == f"Bearer {TOKEN}"
@@ -60,6 +62,14 @@ class FakeService:
     async def disarm(self, request: web.Request) -> web.Response:
         self.disarm_calls.append(await request.json())
         return web.json_response(self.disarm_response)
+
+    async def chime(self, request: web.Request) -> web.Response:
+        if not self._authorized(request):
+            return web.json_response({"error": {"code": "unauthorized", "message": "no"}}, status=401)
+        self.chime_calls.append({"node_id": int(request.match_info["node_id"]), **await request.json()})
+        if self.chime_status == 204:
+            return web.Response(status=204)
+        return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
 
     async def stream(self, request: web.Request) -> web.StreamResponse:
         if not self._authorized(request):
@@ -95,6 +105,7 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/panel", fake.panel)
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
+    app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
     app.router.add_get("/api/v1/stream", fake.stream)
     server = TestServer(app, host="127.0.0.1")
     await server.start_server()
@@ -343,15 +354,9 @@ async def test_keypad_entities_unavailable_while_disconnected(hass: HomeAssistan
 
 
 @pytest.fixture
-def chime_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    """Stand in for the client library's `async_chime_keypad` (added in zwave-alarm-client 0.3.0)."""
-    calls: list[dict] = []
-
-    async def fake(session, host, port, token, node_id, sound, *, volume=None, secure=False):
-        calls.append({"node_id": node_id, "sound": sound, "volume": volume, "token": token, "secure": secure})
-
-    monkeypatch.setattr(api, "async_chime_keypad", fake, raising=False)
-    return calls
+def chime_calls(service: FakeService) -> list[dict]:
+    """Chime requests the fake service received, sent by the real zwave-alarm-client."""
+    return service.chime_calls
 
 
 def _keypad_device_id(hass: HomeAssistant, entry: MockConfigEntry, node_id: int = 12) -> str:
@@ -370,8 +375,8 @@ async def test_chime_service_calls_the_client(hass: HomeAssistant, service: Fake
     )
 
     assert chime_calls == [
-        {"node_id": 12, "sound": "doorbell", "volume": 60, "token": TOKEN, "secure": False},
-        {"node_id": 12, "sound": "guitar", "volume": None, "token": TOKEN, "secure": False},
+        {"node_id": 12, "sound": "doorbell", "volume": 60},
+        {"node_id": 12, "sound": "guitar"},
     ]
 
 
@@ -415,20 +420,11 @@ async def test_chime_service_needs_a_keypad_target(hass: HomeAssistant, service:
 
 
 @pytest.mark.parametrize(
-    ("raised", "expected"),
-    [
-        (api.NotFound("gone"), ServiceValidationError),
-        (api.BadRequest("nope"), ServiceValidationError),
-        (api.CannotConnect(), HomeAssistantError),
-        (api.InvalidAuth(), HomeAssistantError),
-        (api.ZwaveAlarmError("boom"), HomeAssistantError),
-    ],
+    ("status", "expected"),
+    [(404, ServiceValidationError), (400, ServiceValidationError), (401, HomeAssistantError), (500, HomeAssistantError)],
 )
-async def test_chime_service_maps_client_errors(hass: HomeAssistant, service: FakeService, setup, monkeypatch, raised, expected) -> None:
-    async def failing(*args, **kwargs):
-        raise raised
-
-    monkeypatch.setattr(api, "async_chime_keypad", failing, raising=False)
+async def test_chime_service_maps_client_errors(hass: HomeAssistant, service: FakeService, setup, status, expected) -> None:
+    service.chime_status = status
     entry = await setup()
     await _settle(hass, service)
 
@@ -439,12 +435,15 @@ async def test_chime_service_maps_client_errors(hass: HomeAssistant, service: Fa
     assert type(caught.value) is expected
 
 
-async def test_chime_service_reports_an_outdated_client_library(hass: HomeAssistant, service: FakeService, setup, monkeypatch) -> None:
-    monkeypatch.delattr(api, "async_chime_keypad", raising=False)
+async def test_chime_service_maps_unreachable_service(hass: HomeAssistant, service: FakeService, setup, monkeypatch) -> None:
+    async def unreachable(*args, **kwargs):
+        raise api.CannotConnect
+
+    monkeypatch.setattr(api, "async_chime_keypad", unreachable)
     entry = await setup()
     await _settle(hass, service)
 
-    with pytest.raises(HomeAssistantError, match="update it"):
+    with pytest.raises(HomeAssistantError, match="Could not reach"):
         await hass.services.async_call(
             DOMAIN, "keypad_chime", {"device_id": _keypad_device_id(hass, entry), "sound": "doorbell"}, blocking=True
         )
