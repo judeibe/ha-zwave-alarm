@@ -17,6 +17,16 @@ It talks to the service through the [`zwave-alarm-client`](https://github.com/ju
 | `sensor.zwave_alarm_fault_count` | Sensors offline or low on battery; attribute `sensors` lists each with its zone and reason. |
 | `event.zwave_alarm_security_events` | One event per `SecurityEvent` the service records (`armed`, `disarmed`, `breach`, `alarm_triggered`, `alarm_cleared`, `device_fault`, `lockout`, `guest_code_used`), with `details` such as "Cleared by Owner". |
 
+Each keypad the service discovers (for example a Ring Keypad v2) becomes its own device with these entities, kept live by `keypad.changed` and the snapshot:
+
+| Entity | Purpose |
+|---|---|
+| `event.<keypad>_keypad_input` | One event per button press: `code_entered`, `arm_away`, `arm_home`, `disarm`, `cancel` or `emergency` (attribute `emergency`: `fire`, `police` or `medical`). The entered code is never exposed. Unknown kinds are ignored. |
+| `binary_sensor.<keypad>_connectivity` | `on` while the keypad is online. |
+| `sensor.<keypad>_battery` | Battery percentage; `unknown` when the keypad doesn't report one. |
+
+The `zwave_alarm.keypad_chime` action plays a chime on the selected keypad devices with a `sound` and an optional `volume` from 0 to 99.
+
 All entities go `unavailable` while the service is unreachable (never `disarmed`). A rejected token starts Home Assistant's re-authentication flow. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 
 This repo contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.

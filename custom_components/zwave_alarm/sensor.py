@@ -14,13 +14,16 @@ so it can be unit tested without Home Assistant installed.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     ENTITY_ID_FORMAT,
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,6 +32,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .fault_state import count_faulted_sensors, faulted_sensors
+from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
+from .keypad_state import keypad_battery_level
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +44,9 @@ async def async_setup_entry(
     """Create the single fault-count sensor for this config entry."""
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([ZwaveAlarmFaultCountSensor(coordinator, entry)])
+    async_add_keypad_entities(
+        coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadBatterySensor(c, e, keypad)]
+    )
 
 
 class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], SensorEntity):
@@ -78,3 +86,20 @@ class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], Senso
         if self.coordinator.data is None:
             return None
         return {"sensors": faulted_sensors(self.coordinator.data.zones)}
+
+
+class ZwaveAlarmKeypadBatterySensor(ZwaveAlarmKeypadEntity, SensorEntity):
+    """A keypad's battery percentage; unknown while the keypad reports no level."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, keypad: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, keypad, "battery")
+
+    @property
+    def native_value(self) -> int | None:
+        keypad = self._keypad()
+        return keypad_battery_level(keypad) if keypad is not None else None

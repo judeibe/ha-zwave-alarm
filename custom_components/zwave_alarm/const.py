@@ -8,3 +8,6 @@ CONF_SSL = "ssl"
 # The service's default HTTP port (src/config/index.ts's HTTP_PORT); used only
 # to pre-fill the config flow form, not enforced.
 DEFAULT_PORT = 3000
+
+# Keypad contract v1.1 capability that gates the chime service.
+CAPABILITY_CHIME = "chime"
