@@ -1,8 +1,11 @@
 keypad_chime:
-  target:
-    device:
-      integration: zwave_alarm
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zwave_alarm
+          multiple: true
     sound:
       required: true
       example: doorbell

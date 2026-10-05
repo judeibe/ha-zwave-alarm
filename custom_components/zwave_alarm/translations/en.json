@@ -74,6 +74,10 @@
       "name": "Play keypad chime",
       "description": "Plays a chime sound on a keypad that supports it.",
       "fields": {
+        "device_id": {
+          "name": "Keypads",
+          "description": "The keypad devices to play the chime on."
+        },
         "sound": {
           "name": "Sound",
           "description": "The chime sound to play; it must be one the keypad supports."
