@@ -6,6 +6,8 @@ It talks to the service through the [`zwave-alarm-client`](https://github.com/ju
 
 **Testing:** `pip install -r requirements-test.txt && pytest` (Python 3.13). `tests/test_integration.py` boots a real Home Assistant against a fake service (REST + WebSocket); the `*_state.py` modules hold the pure logic and are also unit tested without Home Assistant. HTTP client tests live in the client repo.
 
+**Releases:** versions are produced by [semantic-release](https://semantic-release.gitbook.io) from [Conventional Commits](https://www.conventionalcommits.org) pushed to `main` (`fix:` is a patch, `feat:` a minor, `!` or `BREAKING CHANGE:` a major). The release job rewrites `custom_components/zwave_alarm/manifest.json` with the new version, commits it as `chore(release): vX.Y.Z [skip ci]`, and tags and publishes the GitHub release. Never edit the manifest version by hand; the checked-in `1.0.0` is only the baseline until the first release.
+
 ## Entities
 
 | Entity | Purpose |
