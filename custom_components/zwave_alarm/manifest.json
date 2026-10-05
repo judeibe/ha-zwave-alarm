@@ -9,7 +9,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/judeibe/ha-zwave-alarm/issues",
   "requirements": [
-    "zwave-alarm-client @ git+https://github.com/judeibe/zwave-alarm-client@feat/config-panel-endpoints"
+    "zwave-alarm-client @ git+https://github.com/judeibe/zwave-alarm-client@59e4d63af05b0ee79260f3f9af8cab061f3d78ee"
   ],
   "version": "1.0.0",
   "dependencies": [

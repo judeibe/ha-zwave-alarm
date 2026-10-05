@@ -34,6 +34,7 @@ CATEGORY_SCHEMA = vol.In(["intrusion", "life-safety"])
 # Client exception -> websocket error code (most specific first; the panel maps codes to text).
 _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (api.ZoneNotEmpty, "zone_not_empty"),
+    (api.ZoneInUse, "zone_in_use"),
     (api.CodeInUse, "code_in_use"),
     (api.Conflict, "conflict"),
     (api.NotFound, "not_found"),

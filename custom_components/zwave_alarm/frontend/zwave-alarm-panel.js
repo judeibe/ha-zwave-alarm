@@ -4,6 +4,7 @@
  */
 const ERRORS = {
   zone_not_empty: "The zone still has sensors or a guest assigned. Use 'Force delete' to unassign its sensors.",
+  zone_in_use: "A guest is restricted to this zone. Change or remove that guest first; forcing does not help.",
   code_in_use: "Another person already uses this code. Choose a different one.",
   conflict: "That conflicts with the current configuration (for example the last administrator).",
   not_found: "That item no longer exists. The list has been refreshed.",

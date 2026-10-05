@@ -85,6 +85,7 @@ async def test_set_code_rejects_malformed(hass, hass_ws_client, entry, code) -> 
     [
         (api.CodeInUse("dup"), "code_in_use"),
         (api.ZoneNotEmpty("busy"), "zone_not_empty"),
+        (api.ZoneInUse("guest"), "zone_in_use"),
         (api.Conflict("last admin"), "conflict"),
         (api.NotFound("gone"), "not_found"),
         (api.CannotConnect("down"), "cannot_connect"),
