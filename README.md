@@ -41,7 +41,7 @@ Administrators get a **Z-Wave Alarm** sidebar panel (also at `/zwave-alarm`; hid
 - create, rename and delete zones,
 - onboard Home Assistant `person` entities as alarm users and set, replace or clear their codes.
 
-The panel is a React app using React Router, built to a single ES module (`custom_components/zwave_alarm/frontend/zwave-alarm-panel.js`) that is **committed**, because HACS installs from the repo. Source is in `panel/`; after changing it run `npm ci && npm run check` there and commit the rebuilt bundle (CI fails if it is stale).
+The panel is a React app using React Router, built to a single ES module (`custom_components/zwave_alarm/frontend/zwave-alarm-panel.js`) that is **committed**, because HACS installs from the repo. Source is in `panel/`; after changing it run `npm ci && npm run check` there and commit the rebuilt bundle.
 
 Alarm codes are write-only: they are sent once and never read back, only whether a code is set. The panel and its websocket commands (`zwave_alarm/*`) are admin-only. Needs a Z-Wave Alarm service with the config-panel API.
 
