@@ -11,7 +11,7 @@ DataUpdateCoordinator` and is therefore only verifiable here via
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # Exponential backoff for stream reconnects (contracts/ha-custom-component.md's
@@ -39,6 +39,8 @@ class StreamState:
 
     panel: dict[str, Any] | None
     zones: list[dict[str, Any]]
+    # KeypadSummary dicts (keypad contract v1.1); the snapshot's `keypads` is optional, so older services leave this empty.
+    keypads: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -54,7 +56,12 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
     event_type = event.get("type")
 
     if event_type == "snapshot":
-        return StreamState(panel=event["panel"], zones=event["zones"])
+        return StreamState(panel=event["panel"], zones=event["zones"], keypads=event.get("keypads") or [])
+
+    if event_type == "keypad.changed":
+        keypad = event["keypad"]
+        keypads = [k for k in state.keypads if k["nodeId"] != keypad["nodeId"]]
+        return replace(state, keypads=sorted([*keypads, keypad], key=lambda k: k["nodeId"]))
 
     if event_type == "panel.changed":
         if state.panel is None:
@@ -86,8 +93,8 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             sensor["batteryLevel"] = event["batteryLevel"]
         return state
 
-    # `event.recorded` carries no panel/zone/sensor state (the coordinator
-    # forwards it to the event entity instead), and any future event type this
+    # `event.recorded` and `keypad.event` carry no panel/zone/sensor/keypad state (the coordinator
+    # forwards them to the event entities instead), and any future event type this
     # client doesn't yet recognize is ignored rather than raising -- matching
     # src/api/ws.ts's own "ignore unrecognized messages" precedent for this
     # read-only channel.

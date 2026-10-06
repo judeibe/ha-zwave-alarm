@@ -46,7 +46,69 @@
           }
         },
         "name": "Security events"
+      },
+      "keypad_input": {
+        "name": "Keypad input",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "code_entered": "Code entered",
+              "arm_away": "Arm away",
+              "arm_home": "Arm home",
+              "disarm": "Disarm",
+              "cancel": "Cancel",
+              "emergency": "Emergency"
+            }
+          }
+        }
       }
+    },
+    "binary_sensor": {
+      "keypad_connectivity": {
+        "name": "Connectivity"
+      }
+    }
+  },
+  "services": {
+    "keypad_chime": {
+      "name": "Play keypad chime",
+      "description": "Plays a chime sound on a keypad that supports it.",
+      "fields": {
+        "device_id": {
+          "name": "Keypads",
+          "description": "The keypad devices to play the chime on."
+        },
+        "sound": {
+          "name": "Sound",
+          "description": "The chime sound to play; it must be one the keypad supports."
+        },
+        "volume": {
+          "name": "Volume",
+          "description": "Playback volume from 0 to 99. The keypad's own volume is used when omitted."
+        }
+      }
+    }
+  },
+  "selector": {
+    "chime_sound": {
+      "options": {
+        "double_beep": "Double beep",
+        "guitar": "Guitar",
+        "wind_chimes": "Wind chimes",
+        "bing_bong": "Bing bong",
+        "doorbell": "Doorbell"
+      }
+    }
+  },
+  "exceptions": {
+    "keypad_not_found": {
+      "message": "No Z-Wave Alarm keypad matches the selected target."
+    },
+    "chime_unsupported": {
+      "message": "{keypad} does not support chimes."
+    },
+    "chime_sound_unsupported": {
+      "message": "{keypad} does not support the sound {sound}."
     }
   },
   "options": {

@@ -9,5 +9,8 @@ CONF_SSL = "ssl"
 # to pre-fill the config flow form, not enforced.
 DEFAULT_PORT = 3000
 
+# Keypad contract v1.1 capability that gates the chime service.
+CAPABILITY_CHIME = "chime"
+
 # Options-flow key: show the configuration panel in the sidebar (it stays reachable by URL either way).
 CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"

@@ -19,6 +19,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
+from .keypad_state import KEYPAD_EVENT_TYPES
 
 # data-model.md SecurityEvent.type
 SECURITY_EVENT_TYPES = [
@@ -39,6 +41,9 @@ async def async_setup_entry(
     """Create the single security-event entity for this config entry."""
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([ZwaveAlarmSecurityEvents(coordinator, entry)])
+    async_add_keypad_entities(
+        coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadInputEvent(c, e, keypad)]
+    )
 
 
 class ZwaveAlarmSecurityEvents(EventEntity):
@@ -74,5 +79,25 @@ class ZwaveAlarmSecurityEvents(EventEntity):
         # An event type this integration doesn't know yet (newer service) is
         # dropped: EventEntity rejects types outside `event_types`.
         if event_type in SECURITY_EVENT_TYPES:
+            self._trigger_event(event_type, attributes)
+            self.async_write_ha_state()
+
+
+class ZwaveAlarmKeypadInputEvent(ZwaveAlarmKeypadEntity, EventEntity):
+    """Fires on each button press on one keypad (`keypad.event`); never carries the entered code."""
+
+    _attr_translation_key = "keypad_input"
+    _attr_event_types = KEYPAD_EVENT_TYPES
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, keypad: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, keypad, "input")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.coordinator.async_add_keypad_event_listener(self._handle_keypad_event))
+
+    @callback
+    def _handle_keypad_event(self, node_id: int, event_type: str, attributes: dict[str, Any]) -> None:
+        if node_id == self._node_id:
             self._trigger_event(event_type, attributes)
             self.async_write_ha_state()
