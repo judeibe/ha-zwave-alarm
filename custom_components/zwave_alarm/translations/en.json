@@ -110,5 +110,15 @@
     "chime_sound_unsupported": {
       "message": "{keypad} does not support the sound {sound}."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Z-Wave Alarm panel",
+        "data": {
+          "show_in_sidebar": "Show the configuration panel in the sidebar"
+        }
+      }
+    }
   }
 }

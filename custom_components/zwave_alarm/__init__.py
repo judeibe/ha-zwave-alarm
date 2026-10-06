@@ -25,9 +25,11 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CAPABILITY_CHIME, CONF_SSL, DOMAIN
+from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import keypad_device_identifier
+from .panel import async_register_panel, async_remove_panel
+from .websocket_api import async_register_commands
 
 PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "sensor"]
 
@@ -86,6 +88,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             await coordinator.async_chime_keypad(keypad["nodeId"], sound, call.data.get(ATTR_VOLUME))
 
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    async_register_commands(hass)  # admin-only websocket API for the configuration panel
     return True
 
 
@@ -109,8 +112,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_register_panel(hass, show_in_sidebar=entry.options.get(CONF_SHOW_IN_SIDEBAR, True))
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -120,5 +129,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
+        if not hass.data[DOMAIN]:
+            async_remove_panel(hass)
 
     return unload_ok

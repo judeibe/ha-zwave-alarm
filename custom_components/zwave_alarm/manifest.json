@@ -1,11 +1,20 @@
 {
   "domain": "zwave_alarm",
   "name": "Z-Wave Alarm",
-  "codeowners": ["@judeibe"],
+  "codeowners": [
+    "@judeibe"
+  ],
   "config_flow": true,
+  "dependencies": [
+    "http",
+    "panel_custom",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/judeibe/ha-zwave-alarm",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/judeibe/ha-zwave-alarm/issues",
-  "requirements": ["zwave-alarm-client==0.3.0"],
+  "requirements": [
+    "zwave-alarm-client==0.4.0"
+  ],
   "version": "1.1.0"
 }
