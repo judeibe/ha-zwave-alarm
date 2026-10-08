@@ -55,7 +55,6 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         session: aiohttp.ClientSession,
         host: str,
         port: int,
-        token: str,
         secure: bool = False,
     ) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name="Z-Wave Alarm stream")
@@ -69,7 +68,6 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         self._session = session
         self._host = host
         self._port = port
-        self._token = token
         self._secure = secure
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self._keypad_event_listeners: list[Callable[[int, str, dict[str, Any]], None]] = []
@@ -104,7 +102,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         """Play a chime on one keypad via `POST /api/v1/keypads/{nodeId}/chime`, mapping client errors to HA errors."""
         try:
             await api.async_chime_keypad(
-                self._session, self._host, self._port, self._token, node_id, sound,
+                self._session, self._host, self._port, None, node_id, sound,
                 volume=volume, secure=self._secure,
             )
         except api.NotFound as err:
@@ -112,7 +110,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         except api.BadRequest as err:
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the chime: {err}") from err
         except api.InvalidAuth as err:
-            raise HomeAssistantError("The Z-Wave Alarm service rejected the Home Assistant token.") from err
+            raise HomeAssistantError("The Z-Wave Alarm service refused the request.") from err
         except api.CannotConnect as err:
             raise HomeAssistantError("Could not reach the Z-Wave Alarm service.") from err
         except api.ZwaveAlarmError as err:
@@ -140,21 +138,14 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         while True:
             try:
                 async for event in api.async_stream_events(
-                    self._session, self._host, self._port, self._token, secure=self._secure
+                    self._session, self._host, self._port, None, secure=self._secure
                 ):
                     if event["type"] == "snapshot":
                         attempt = 0
                     await self._handle_event(event)
             except asyncio.CancelledError:
                 raise
-            except api.InvalidAuth:
-                # A revoked/unknown token never recovers by retrying: stop and
-                # ask the user for a new one (reauth flow) while entities sit
-                # at `unavailable`.
-                self.async_set_update_error(ConnectionError("Z-Wave Alarm token rejected"))
-                self.config_entry.async_start_reauth(self.hass)
-                return
-            except api.CannotConnect as err:
+            except (api.InvalidAuth, api.CannotConnect) as err:
                 _LOGGER.debug("Z-Wave Alarm stream connection error: %s", err)
 
             # The connection just ended (error, or the server/network closed
@@ -187,7 +178,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             # zone list so the new entities can appear, then apply the event.
             try:
                 zones = await api.async_get_zones(
-                    self._session, self._host, self._port, self._token, secure=self._secure
+                    self._session, self._host, self._port, None, secure=self._secure
                 )
             except api.ZwaveAlarmError as err:
                 _LOGGER.debug("Could not refresh zones after unknown sensor event: %s", err)

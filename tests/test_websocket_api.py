@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -27,7 +27,7 @@ def _enable(enable_custom_integrations):
 async def entry(hass):
     assert await async_setup_component(hass, DOMAIN, {})
     entry = MockConfigEntry(
-        domain=DOMAIN, data={CONF_HOST: "svc", CONF_PORT: 3000, CONF_ACCESS_TOKEN: "tok", CONF_SSL: False}
+        domain=DOMAIN, data={CONF_HOST: "svc", CONF_PORT: 3000, CONF_SSL: False}
     )
     entry.add_to_hass(hass)
     entry.mock_state(hass, ConfigEntryState.LOADED)

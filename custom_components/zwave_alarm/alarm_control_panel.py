@@ -28,7 +28,7 @@ from homeassistant.components.alarm_control_panel import (
     CodeFormat,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -73,7 +73,6 @@ class ZwaveAlarmControlPanel(
         super().__init__(coordinator)
         self._host: str = entry.data[CONF_HOST]
         self._port: int = entry.data[CONF_PORT]
-        self._token: str = entry.data[CONF_ACCESS_TOKEN]
         self._secure: bool = entry.data.get(CONF_SSL, False)
         self._attr_unique_id = f"{entry.entry_id}_panel"
         # Explicit entity_id so it is the contract's `alarm_control_panel.zwave_alarm`
@@ -132,11 +131,11 @@ class ZwaveAlarmControlPanel(
         session = async_get_clientsession(self.hass)
         try:
             panel = await func(
-                session, self._host, self._port, self._token, secure=self._secure, **kwargs
+                session, self._host, self._port, None, secure=self._secure, **kwargs
             )
         except api.InvalidAuth as err:
             raise ServiceValidationError(
-                "The Z-Wave Alarm service rejected the Home Assistant token or code."
+                "The Z-Wave Alarm service rejected the code."
             ) from err
         except api.AccountLocked as err:
             raise HomeAssistantError(
