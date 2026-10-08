@@ -146,3 +146,15 @@ async def test_panel_registered_admin_only_and_removed_on_unload(hass) -> None:
     assert panel.require_admin is True
     async_remove_panel(hass)
     assert PANEL_URL_PATH not in hass.data["frontend_panels"]
+
+
+def test_built_panel_bundle_is_shipped() -> None:
+    """HACS installs from the repo, so the React bundle must be committed (built from panel/)."""
+    from pathlib import Path
+
+    from custom_components.zwave_alarm.panel import PANEL_ELEMENT
+
+    bundle = Path(__file__).parents[1] / "custom_components" / "zwave_alarm" / "frontend" / f"{PANEL_ELEMENT}.js"
+    assert bundle.stat().st_size > 10_000
+    assert "customElements.define(" in bundle.read_text()
+    assert PANEL_ELEMENT in bundle.read_text()

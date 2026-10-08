@@ -26,6 +26,29 @@ jobs:
       - run: pip install -r requirements-test.txt
       - run: pytest
 
+  panel:
+    name: Panel (typecheck, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: panel/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # HACS installs the committed bundle, so it must match the source.
+      - name: Committed bundle is up to date
+        working-directory: .
+        run: git diff --exit-code -- custom_components/zwave_alarm/frontend
+
   hacs:
     name: HACS validation
     runs-on: ubuntu-latest
@@ -61,7 +84,7 @@ jobs:
   release:
     name: Version and tag
     # Branch protection on main must allow the GITHUB_TOKEN to push the release commit.
-    needs: [test, hacs, hassfest]
+    needs: [test, panel, hacs, hassfest]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
