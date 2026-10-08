@@ -14,7 +14,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -55,7 +55,7 @@ class _Call:
             async_get_clientsession(hass),
             entry.data[CONF_HOST],
             entry.data[CONF_PORT],
-            entry.data[CONF_ACCESS_TOKEN],
+            None,
         )
         self.kwargs = {"secure": entry.data.get(CONF_SSL, False)}
 

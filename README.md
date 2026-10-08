@@ -27,7 +27,7 @@ Each keypad the service discovers (for example a Ring Keypad v2) becomes its own
 
 The `zwave_alarm.keypad_chime` action plays a chime on the selected keypad devices with a `sound` and an optional `volume` from 0 to 99.
 
-All entities go `unavailable` while the service is unreachable (never `disarmed`). A rejected token starts Home Assistant's re-authentication flow. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
+All entities go `unavailable` while the service is unreachable (never `disarmed`). Setup asks only for the host and port; no token or other authentication is needed. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 
 This repo contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.
 

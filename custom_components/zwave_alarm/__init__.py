@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
@@ -96,6 +96,14 @@ def _coordinators(hass: HomeAssistant) -> list[ZwaveAlarmCoordinator]:
     return list(hass.data.get(DOMAIN, {}).values())
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Drop the API token stored by v1 entries: the service no longer needs authentication."""
+    if entry.version == 1:
+        data = {k: v for k, v in entry.data.items() if k != "access_token"}
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Z-Wave Alarm from a config entry."""
     session = async_get_clientsession(hass)
@@ -105,7 +113,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session,
         entry.data[CONF_HOST],
         entry.data[CONF_PORT],
-        entry.data[CONF_ACCESS_TOKEN],
         entry.data.get(CONF_SSL, False),
     )
     coordinator.async_start(entry)

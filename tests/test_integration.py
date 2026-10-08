@@ -12,7 +12,7 @@ import zwave_alarm_client as api
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -20,7 +20,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.zwave_alarm.const import CONF_SSL, DOMAIN
 
-TOKEN = "good-token"
 SENSOR = {
     "id": "s1", "zwaveNodeId": 2, "zoneId": "z1", "name": "Front door", "category": "intrusion",
     "currentState": "normal", "batteryLevel": 90, "connectivityStatus": "online", "updatedAt": 0,
@@ -47,13 +46,13 @@ class FakeService:
         self.keypads: list[dict] | None = [copy.deepcopy(KEYPAD)]
         self.chime_calls: list[dict] = []
         self.chime_status = 204
+        self.auth_headers: list[str | None] = []
 
-    def _authorized(self, request: web.Request) -> bool:
-        return request.headers.get("Authorization") == f"Bearer {TOKEN}"
+    def _note(self, request: web.Request) -> None:
+        self.auth_headers.append(request.headers.get("Authorization"))
 
     async def panel(self, request: web.Request) -> web.Response:
-        if not self._authorized(request):
-            return web.json_response({"error": {"code": "unauthorized", "message": "no"}}, status=401)
+        self._note(request)
         return web.json_response(PANEL)
 
     async def zones_handler(self, request: web.Request) -> web.Response:
@@ -64,16 +63,14 @@ class FakeService:
         return web.json_response(self.disarm_response)
 
     async def chime(self, request: web.Request) -> web.Response:
-        if not self._authorized(request):
-            return web.json_response({"error": {"code": "unauthorized", "message": "no"}}, status=401)
+        self._note(request)
         self.chime_calls.append({"node_id": int(request.match_info["node_id"]), **await request.json()})
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
 
     async def stream(self, request: web.Request) -> web.StreamResponse:
-        if not self._authorized(request):
-            return web.Response(status=401)
+        self._note(request)
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.sockets.append(ws)
@@ -127,10 +124,11 @@ async def setup(hass: HomeAssistant, service: FakeService):
     """
     entries: list[MockConfigEntry] = []
 
-    async def _setup(token: str = TOKEN) -> MockConfigEntry:
+    async def _setup(**extra: Any) -> MockConfigEntry:
         entry = MockConfigEntry(
             domain=DOMAIN,
-            data={CONF_HOST: "127.0.0.1", CONF_PORT: service.port, CONF_ACCESS_TOKEN: token, CONF_SSL: False},
+            data={CONF_HOST: "127.0.0.1", CONF_PORT: service.port, CONF_SSL: False, **extra},
+            version=1 if extra else 2,
             unique_id=f"127.0.0.1:{service.port}",
         )
         entry.add_to_hass(hass)
@@ -255,20 +253,35 @@ async def test_disarm_passes_code_and_updates_state(hass: HomeAssistant, service
     assert hass.states.get("alarm_control_panel.zwave_alarm").state == "disarmed"
 
 
-async def test_rejected_token_starts_reauth(hass: HomeAssistant, service: FakeService, setup) -> None:
-    entry = await setup(token="revoked")
-    await asyncio.sleep(0.2)
-    await hass.async_block_till_done()
+async def test_no_token_is_sent(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
 
-    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
-    assert [f["context"]["source"] for f in flows] == ["reauth"]
-    assert hass.states.get("alarm_control_panel.zwave_alarm").state == "unavailable"
+    assert service.auth_headers and set(service.auth_headers) == {None}
+    assert hass.states.get("alarm_control_panel.zwave_alarm").state == "armed_away"
 
-    result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {CONF_ACCESS_TOKEN: "still-bad"})
-    assert result["errors"] == {"base": "invalid_auth"}
-    result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {CONF_ACCESS_TOKEN: TOKEN})
-    assert result["type"] == "abort" and result["reason"] == "reauth_successful"
-    assert entry.data[CONF_ACCESS_TOKEN] == TOKEN
+
+async def test_legacy_entry_token_is_dropped(hass: HomeAssistant, service: FakeService, setup) -> None:
+    entry = await setup(access_token="stale-token")
+    await _settle(hass, service)
+
+    assert entry.version == 2
+    assert "access_token" not in entry.data
+    assert set(service.auth_headers) == {None}
+    assert hass.config_entries.flow.async_progress_by_handler(DOMAIN) == []
+
+
+async def test_config_flow_asks_only_for_connection_details(hass: HomeAssistant, service: FakeService) -> None:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    assert set(result["data_schema"].schema) == {CONF_HOST, CONF_PORT, CONF_SSL}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: service.port}
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"] == {CONF_HOST: "127.0.0.1", CONF_PORT: service.port, CONF_SSL: False}
+    assert set(service.auth_headers) == {None}
+    await hass.config_entries.async_unload(result["result"].entry_id)
 
 
 async def _push(hass: HomeAssistant, service: FakeService, message: dict) -> None:
