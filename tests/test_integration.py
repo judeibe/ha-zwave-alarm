@@ -294,7 +294,7 @@ async def test_keypad_gets_a_device_and_entities_from_the_snapshot(hass: HomeAss
     entry = await setup()
     await _settle(hass, service)
 
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_keypad_12")})
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_keypad_12"), entry.entry_id)
     assert device.name == "Ring Keypad v2"
     assert device.model == "ring-keypad-v2"
     assert device.via_device_id is not None
@@ -373,7 +373,7 @@ def chime_calls(service: FakeService) -> list[dict]:
 
 
 def _keypad_device_id(hass: HomeAssistant, entry: MockConfigEntry, node_id: int = 12) -> str:
-    return dr.async_get(hass).async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_keypad_{node_id}")}).id
+    return dr.async_get(hass).async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_keypad_{node_id}"), entry.entry_id).id
 
 
 async def test_chime_service_calls_the_client(hass: HomeAssistant, service: FakeService, setup, chime_calls) -> None:
@@ -425,7 +425,7 @@ async def test_chime_service_rejects_unsupported_sound_and_capability(hass: Home
 async def test_chime_service_needs_a_keypad_target(hass: HomeAssistant, service: FakeService, setup, chime_calls) -> None:
     entry = await setup()
     await _settle(hass, service)
-    panel_device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    panel_device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
 
     with pytest.raises(ServiceValidationError, match="No Z-Wave Alarm keypad"):
         await hass.services.async_call(DOMAIN, "keypad_chime", {"device_id": panel_device.id, "sound": "doorbell"}, blocking=True)
