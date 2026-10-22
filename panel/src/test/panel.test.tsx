@@ -44,6 +44,24 @@ describe("routing", () => {
 });
 
 describe("sensors", () => {
+  it("shows the service's reason when only discovery is unavailable, and still lists zones", async () => {
+    const { api } = fakeApi({
+      ...OVERVIEW,
+      discoverable: [],
+      discoverable_error: { code: "service_unavailable", message: "The zwave-js driver is not ready yet; try again shortly." },
+    });
+    render(
+      <ApiContext.Provider value={api}>
+        <RouterProvider router={createTestRouter(api, "/sensors")} />
+      </ApiContext.Provider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The Z-Wave Alarm service is up but its Z-Wave driver isn't ready yet. The zwave-js driver is not ready yet; try again shortly.",
+    );
+    expect(screen.queryByText(/No unassigned Z-Wave devices/)).not.toBeInTheDocument();
+    expect(screen.getByText("Front door")).toBeInTheDocument();
+  });
+
   it("adds a discovered node to the chosen zone", async () => {
     const { call, user } = setup("/sensors");
     await user.selectOptions(await screen.findByLabelText("Category"), "life-safety");

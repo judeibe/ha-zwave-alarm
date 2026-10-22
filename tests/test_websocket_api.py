@@ -51,7 +51,29 @@ async def test_overview(hass, hass_ws_client, entry) -> None:
     assert resp["success"]
     assert resp["result"]["zones"] == [ZONE]
     assert resp["result"]["discoverable"] == [{"zwaveNodeId": 5}]
+    assert resp["result"]["discoverable_error"] is None
     assert resp["result"]["ha_people"] == [{"entity_id": "person.alex", "name": "Alex", "user_id": "abc"}]
+
+
+async def test_overview_degrades_when_the_driver_is_not_ready(hass, hass_ws_client, entry) -> None:
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[ZONE])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(side_effect=api.ServiceUnavailable("driver not ready"))),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[USER])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["success"]
+    assert resp["result"]["zones"] == [ZONE] and resp["result"]["users"] == [USER]
+    assert resp["result"]["discoverable"] == []
+    assert resp["result"]["discoverable_error"] == {"code": "service_unavailable", "message": "driver not ready"}
+
+
+async def test_overview_still_fails_when_zones_are_unavailable(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_get_zones", AsyncMock(side_effect=api.ServiceUnavailable("driver not ready"))):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert not resp["success"]
+    assert resp["error"]["code"] == "service_unavailable"
+    assert resp["error"]["message"] == "driver not ready"
 
 
 async def test_non_admin_is_refused(hass, hass_ws_client, hass_admin_user, entry) -> None:
@@ -89,6 +111,7 @@ async def test_set_code_rejects_malformed(hass, hass_ws_client, entry, code) -> 
         (api.Conflict("last admin"), "conflict"),
         (api.NotFound("gone"), "not_found"),
         (api.CannotConnect("down"), "cannot_connect"),
+        (api.ServiceUnavailable("driver not ready"), "service_unavailable"),
     ],
 )
 async def test_client_errors_map_to_codes(hass, hass_ws_client, entry, exc, code) -> None:

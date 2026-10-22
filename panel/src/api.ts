@@ -9,6 +9,7 @@ export const ERROR_TEXT: Record<string, string> = {
   not_found: "That item no longer exists. The list has been refreshed.",
   invalid_request: "The service rejected the request as invalid.",
   cannot_connect: "Cannot reach the Z-Wave Alarm service.",
+  service_unavailable: "The Z-Wave Alarm service is up but its Z-Wave driver isn't ready yet.",
   invalid_auth: "The service rejected the stored token. Re-authenticate the integration.",
   forbidden: "The service denied this action.",
   entry_not_found: "The Z-Wave Alarm integration is not loaded.",
@@ -16,7 +17,9 @@ export const ERROR_TEXT: Record<string, string> = {
 
 export class ApiError extends Error {
   constructor(public code: string, message: string) {
-    super(ERROR_TEXT[code] ?? (message || "Unexpected error"));
+    // The service says why it is unavailable (e.g. the driver is still starting): keep that as detail.
+    const text = ERROR_TEXT[code];
+    super(code === "service_unavailable" && message ? `${text} ${message}` : (text ?? (message || "Unexpected error")));
   }
 }
 

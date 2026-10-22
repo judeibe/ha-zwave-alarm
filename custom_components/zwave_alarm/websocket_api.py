@@ -43,6 +43,7 @@ _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (api.Forbidden, "forbidden"),
     (api.AccountLocked, "account_locked"),
     (api.TooManyRequests, "too_many_requests"),
+    (api.ServiceUnavailable, "service_unavailable"),  # a CannotConnect subclass: must precede it
     (api.CannotConnect, "cannot_connect"),
 ]
 
@@ -119,9 +120,17 @@ async def _ha_users(hass: HomeAssistant) -> list[dict[str, Any]]:
 @_command({vol.Required("type"): "zwave_alarm/overview"})
 async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> dict[str, Any]:
     """Everything the panel renders, in one round trip."""
+    zones = await call(api.async_get_zones)
+    # Discovery needs the zwave-js driver, which can lag behind the service: show everything else
+    # and report only discovery as unavailable.
+    try:
+        discoverable, discoverable_error = await call(api.async_list_discoverable_sensors), None
+    except api.ServiceUnavailable as err:
+        discoverable, discoverable_error = [], {"code": "service_unavailable", "message": str(err)}
     return {
-        "zones": await call(api.async_get_zones),
-        "discoverable": await call(api.async_list_discoverable_sensors),
+        "zones": zones,
+        "discoverable": discoverable,
+        "discoverable_error": discoverable_error,
         "users": await call(api.async_list_users),
         "ha_people": _ha_people(hass),
         "ha_users": await _ha_users(hass),

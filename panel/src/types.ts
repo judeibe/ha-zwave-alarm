@@ -40,6 +40,8 @@ export interface HaPerson {
 export interface Overview {
   zones: Zone[];
   discoverable: DiscoverableSensor[];
+  /** Set when discovery alone failed (the service's Z-Wave driver isn't ready); the rest still loads. */
+  discoverable_error?: { code: string; message: string } | null;
   users: AlarmUser[];
   ha_people: HaPerson[];
   ha_users: { id: string; name: string; is_admin: boolean }[];
