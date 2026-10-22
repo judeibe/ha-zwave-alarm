@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiError } from "../api";
 import { useApi } from "../context";
 import { Card, ErrorBanner } from "../components";
 import { useOverview } from "../Layout";
@@ -69,14 +70,15 @@ function AssignedRow({ zone, sensor, zones, run }: { zone: Zone; sensor: Zone["s
 
 export function SensorsPage() {
   const api = useApi();
-  const { zones, discoverable } = useOverview();
+  const { zones, discoverable, discoverable_error } = useOverview();
   const { run, error } = useAction();
   return (
     <section>
       <ErrorBanner message={error} />
       <h2>Discovered Z-Wave devices</h2>
       {!zones.length && <p className="za-muted">Create a zone first (Zones tab), then assign devices to it.</p>}
-      {!discoverable.length && <p className="za-muted">No unassigned Z-Wave devices found. Include a device in Z-Wave JS, then reload.</p>}
+      {discoverable_error && <ErrorBanner message={new ApiError(discoverable_error.code, discoverable_error.message).message} />}
+      {!discoverable.length && !discoverable_error && <p className="za-muted">No unassigned Z-Wave devices found. Include a device in Z-Wave JS, then reload.</p>}
       {discoverable.map((d) => (
         <DiscoveredRow key={d.zwaveNodeId} d={d} zones={zones} onAdd={(p) => run(() => api.call("sensor/assign", p))} />
       ))}
