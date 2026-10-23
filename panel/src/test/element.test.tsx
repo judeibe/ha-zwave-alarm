@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import "../main";
 import type { ZwaveAlarmPanel } from "../main";
 import type { Hass } from "../types";
@@ -26,14 +26,14 @@ afterEach(() => {
 describe("custom element contract", () => {
   it("renders the router under route.prefix and sends admin-only commands through hass.connection", async () => {
     const { h } = mount("/zwave-alarm/zones");
-    expect(await screen.findByLabelText("New zone name")).toBeInTheDocument(); // deep link survives a (re)load
+    expect(await screen.findByRole("button", { name: "New zone" })).toBeInTheDocument(); // deep link survives a (re)load
     expect(h.sendMessagePromise).toHaveBeenCalledWith({ type: "zwave_alarm/overview" });
   });
 
-  it("redirects the bare prefix to /sensors", async () => {
+  it("redirects the bare prefix to the overview", async () => {
     mount("/zwave-alarm");
-    await screen.findByText("Discovered Z-Wave devices");
-    expect(window.location.pathname).toBe("/zwave-alarm/sensors");
+    expect(await screen.findByText("Armed away")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/zwave-alarm/overview");
   });
 
   it("honours a different prefix", async () => {
@@ -51,5 +51,18 @@ describe("custom element contract", () => {
     document.body.append(el);
     expect(await screen.findByText("Discovered Z-Wave devices")).toBeInTheDocument();
     expect(h.sendMessagePromise).toHaveBeenCalled();
+  });
+
+  it("offers HA's menu button only in narrow mode, and it fires hass-toggle-menu", async () => {
+    const { el } = mount("/zwave-alarm/sensors");
+    await screen.findByText("Discovered Z-Wave devices");
+    expect(screen.queryByRole("button", { name: "Open Home Assistant menu" })).not.toBeInTheDocument();
+    act(() => {
+      el.narrow = true;
+    });
+    const listener = vi.fn();
+    document.body.addEventListener("hass-toggle-menu", listener);
+    screen.getByRole("button", { name: "Open Home Assistant menu" }).click();
+    expect(listener).toHaveBeenCalledOnce();
   });
 });

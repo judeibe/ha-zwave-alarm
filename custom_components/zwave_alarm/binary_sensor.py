@@ -71,6 +71,7 @@ async def async_setup_entry(
 class ZwaveAlarmZoneBinarySensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
     """`binary_sensor.zwave_alarm_zone_<zone>` -- on when any sensor in this zone is breached."""
 
+    _attr_has_entity_name = True  # HA prefixes the device name; entity_id stays the explicit one set below
     _attr_device_class = BinarySensorDeviceClass.SAFETY
 
     def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, zone_id: str, zone_name: str) -> None:

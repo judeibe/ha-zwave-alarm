@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { RouterProvider } from "react-router";
 import { Api } from "./api";
-import { ApiContext } from "./context";
+import { ApiContext, NarrowContext } from "./context";
 import { createPanelRouter } from "./routes";
 import css from "./styles.css?inline";
 import type { Hass, PanelRoute } from "./types";
@@ -14,6 +14,8 @@ export class ZwaveAlarmPanel extends HTMLElement {
   private _hass?: Hass;
   private _route?: PanelRoute;
   private _root?: Root;
+  private _router?: ReturnType<typeof createPanelRouter>;
+  private _narrow = false;
   private readonly _api = new Api(() => this._hass as Hass);
 
   set hass(hass: Hass) {
@@ -23,7 +25,11 @@ export class ZwaveAlarmPanel extends HTMLElement {
   set route(route: PanelRoute) {
     this._route = route;
   }
-  set narrow(_: boolean) {}
+  set narrow(narrow: boolean) {
+    const changed = narrow !== this._narrow;
+    this._narrow = narrow;
+    if (changed) this._render();
+  }
   set panel(_: unknown) {}
 
   connectedCallback(): void {
@@ -38,11 +44,18 @@ export class ZwaveAlarmPanel extends HTMLElement {
     this.append(style, host);
     this._root = createRoot(host);
     // HA mounts us at /<url_path>; every in-panel URL is relative to route.prefix.
-    const router = createPanelRouter(this._api, this._route?.prefix ?? DEFAULT_PREFIX);
+    this._router = createPanelRouter(this._api, this._route?.prefix ?? DEFAULT_PREFIX);
+    this._render();
+  }
+
+  private _render(): void {
+    if (!this._root || !this._router) return;
     this._root.render(
       <StrictMode>
         <ApiContext.Provider value={this._api}>
-          <RouterProvider router={router} />
+          <NarrowContext.Provider value={this._narrow}>
+            <RouterProvider router={this._router} />
+          </NarrowContext.Provider>
         </ApiContext.Provider>
       </StrictMode>,
     );
@@ -51,6 +64,8 @@ export class ZwaveAlarmPanel extends HTMLElement {
   disconnectedCallback(): void {
     this._root?.unmount();
     this._root = undefined;
+    this._router?.dispose();
+    this._router = undefined;
     this.replaceChildren();
   }
 }

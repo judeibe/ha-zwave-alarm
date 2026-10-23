@@ -3,6 +3,9 @@ import { Api, ApiError } from "../api";
 import type { Overview } from "../types";
 
 export const OVERVIEW: Overview = {
+  panel: { state: "armed_away", armed_mode: "away", pending_delay_ends_at: null },
+  fault_count: 1,
+  faults: { offline: 0, low_battery: 1 },
   zones: [
     { id: "z1", name: "Downstairs", description: "Ground floor", sensors: [{ id: "s1", zwaveNodeId: 2, zoneId: "z1", name: "Front door", category: "intrusion", currentState: "normal" }] },
     { id: "z2", name: "Upstairs", sensors: [] },

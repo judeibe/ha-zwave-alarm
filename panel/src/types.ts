@@ -9,6 +9,10 @@ export interface Sensor {
   name: string;
   category: Category;
   currentState: "normal" | "breached";
+  batteryLevel?: number | null;
+  connectivityStatus?: "online" | "offline";
+  /** The Z-Wave device's name in Home Assistant (device registry); absent when HA doesn't know the node. */
+  haName?: string;
 }
 export interface Zone {
   id: string;
@@ -22,6 +26,8 @@ export interface DiscoverableSensor {
   manufacturer: string | null;
   product: string | null;
   status: "alive" | "dead" | "asleep";
+  /** The Z-Wave device's name in Home Assistant (device registry); absent when HA doesn't know the node. */
+  haName?: string;
 }
 /** A user never carries a code, only whether one is set. */
 export interface AlarmUser {
@@ -37,7 +43,17 @@ export interface HaPerson {
   name: string;
   user_id: string | null;
 }
+/** Live alarm state from the integration's coordinator; `state` uses HA's alarm_control_panel strings. */
+export interface PanelSummary {
+  state: "disarmed" | "arming" | "armed_away" | "armed_home" | "pending" | "triggered" | null;
+  armed_mode?: string | null;
+  pending_delay_ends_at?: string | null;
+}
 export interface Overview {
+  /** Null until the integration has received its first snapshot from the alarm service. */
+  panel: PanelSummary | null;
+  fault_count: number;
+  faults: { offline: number; low_battery: number };
   zones: Zone[];
   discoverable: DiscoverableSensor[];
   /** Set when discovery alone failed (the service's Z-Wave driver isn't ready); the rest still loads. */

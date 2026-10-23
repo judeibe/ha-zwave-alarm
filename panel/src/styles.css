@@ -1,14 +1,29 @@
-:host, zwave-alarm-panel { display: block; }
-.za-root { padding: 16px; min-height: 100vh; box-sizing: border-box; color: var(--primary-text-color); background: var(--primary-background-color); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
-.za-root h1 { margin: 0 0 12px; font-size: 22px; }
-.za-root h2 { font-size: 16px; margin: 16px 0 8px; }
-.za-root nav a { display: inline-block; padding: 8px 14px; color: inherit; text-decoration: none; border-bottom: 2px solid transparent; }
-.za-root nav a.active { border-color: var(--primary-color); color: var(--primary-color); }
-.za-card { background: var(--card-background-color); border-radius: 8px; padding: 12px 16px; margin: 8px 0; box-shadow: var(--ha-card-box-shadow, 0 1px 3px #0003); }
-.za-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
-.za-muted { color: var(--secondary-text-color); font-size: 13px; }
-.za-error { background: var(--error-color); color: #fff; padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
-.za-root input, .za-root select { padding: 6px; border-radius: 4px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: inherit; }
-.za-act { padding: 6px 12px; border-radius: 4px; border: 0; cursor: pointer; background: var(--primary-color); color: var(--text-primary-color, #fff); }
-.za-act:disabled { opacity: .5; cursor: default; }
-.za-act.danger { background: var(--error-color); }
+/* Tailwind v4 without Preflight: the panel lives in Home Assistant's own document (light DOM), so a global
+   reset would restyle HA. The few resets we need are scoped to .za-root below. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, "Segoe UI", Roboto, sans-serif;
+  /* HA's theme accent when it provides one, Apple blue otherwise. */
+  --color-accent: var(--primary-color, #007aff);
+  --color-accent-dark: var(--primary-color, #0a84ff);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.06);
+}
+
+@layer base {
+  zwave-alarm-panel { display: block; }
+  .za-root, .za-root *, .za-root *::before, .za-root *::after { box-sizing: border-box; }
+  .za-root { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%; }
+  .za-root h1, .za-root h2, .za-root p { margin: 0; }
+  .za-root ul { list-style: none; margin: 0; padding: 0; }
+  .za-root button, .za-root input, .za-root select { font: inherit; color: inherit; margin: 0; }
+  .za-root button { background: transparent; border: 0; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .za-root button:disabled { cursor: default; }
+  .za-root a { color: inherit; text-decoration: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .za-root * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

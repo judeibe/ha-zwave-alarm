@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -6,7 +7,7 @@ import { defineConfig } from "vite";
 // defines a custom element (panel_custom `module_url`). Framework mode emits an HTML document + hashed
 // assets and hydrates the whole document, which cannot live inside HA's own page.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   define: { "process.env.NODE_ENV": JSON.stringify("production") }, // lib mode doesn't replace it
   build: {
     outDir: "../custom_components/zwave_alarm/frontend",
