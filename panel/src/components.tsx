@@ -104,11 +104,18 @@ export const Pill = ({ tone = "neutral", children }: { tone?: keyof typeof PILL;
   <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[13px] font-semibold ${PILL[tone]}`}>{children}</span>
 );
 
+/** A visible label above a control; wrapping the control also gives it its accessible name. */
+export const Field = ({ label, children, className = "" }: { label: string; children: ReactNode; className?: string }) => (
+  <label className={`block ${className}`}>
+    <span className="mb-1 block px-1 text-[13px] font-medium text-zinc-500 dark:text-zinc-400">{label}</span>
+    {children}
+  </label>
+);
+
 export const CODE_RE = /^\d{4,12}$/;
 
 /** Write-only code field: a password input whose value is cleared by the owner after submit, never displayed. */
-export function CodeInput({ label, placeholder, value, onChange }: {
-  label: string;
+export function CodeInput({ placeholder, value, onChange }: {
   placeholder: string;
   value: string;
   onChange: (v: string) => void;
@@ -119,7 +126,6 @@ export function CodeInput({ label, placeholder, value, onChange }: {
       type="password"
       inputMode="numeric"
       autoComplete="off"
-      aria-label={label}
       placeholder={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}

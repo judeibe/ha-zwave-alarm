@@ -1,25 +1,41 @@
 import { createBrowserRouter, createMemoryRouter, Navigate, type RouteObject } from "react-router";
 import type { Api } from "./api";
-import { Layout, LoadError, LoadingState } from "./Layout";
-import { PeoplePage } from "./pages/PeoplePage";
-import { SensorsPage } from "./pages/SensorsPage";
-import { ZonesPage } from "./pages/ZonesPage";
+import { LoadError, LoadingState, Shell } from "./Shell";
+import { OverviewPage } from "./pages/OverviewPage";
+import { PeoplePage, PersonSheet } from "./pages/PeoplePage";
+import { AddSensorSheet, SensorSheet, SensorsPage } from "./pages/SensorsPage";
+import { NewZoneSheet, ZoneSheet, ZonesPage } from "./pages/ZonesPage";
 
 export function createRoutes(api: Api): RouteObject[] {
   return [
     {
       id: "root",
       path: "/",
-      Component: Layout,
+      Component: Shell,
       ErrorBoundary: LoadError,
       loader: () => api.overview(),
       HydrateFallback: LoadingState,
       children: [
-        { index: true, element: <Navigate to="sensors" replace /> },
-        { path: "sensors", Component: SensorsPage },
-        { path: "zones", Component: ZonesPage },
-        { path: "people", Component: PeoplePage },
-        { path: "*", element: <Navigate to="/sensors" replace /> },
+        { index: true, element: <Navigate to="overview" replace /> },
+        { path: "overview", Component: OverviewPage },
+        {
+          path: "sensors",
+          Component: SensorsPage,
+          children: [
+            { path: "add/:nodeId", Component: AddSensorSheet },
+            { path: ":sensorId", Component: SensorSheet },
+          ],
+        },
+        {
+          path: "zones",
+          Component: ZonesPage,
+          children: [
+            { path: "new", Component: NewZoneSheet },
+            { path: ":zoneId", Component: ZoneSheet },
+          ],
+        },
+        { path: "people", Component: PeoplePage, children: [{ path: ":personId", Component: PersonSheet }] },
+        { path: "*", element: <Navigate to="/overview" replace /> },
       ],
     },
   ];

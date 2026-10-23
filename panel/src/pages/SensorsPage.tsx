@@ -1,101 +1,176 @@
 import { useState } from "react";
+import { Outlet, useNavigate, useParams } from "react-router";
 import { ApiError } from "../api";
+import { Actions, Button, EmptyState, ErrorBanner, FIELD, Field, Hint, Pill, SectionTitle, Select } from "../components";
 import { useApi } from "../context";
-import { Actions, Button, Card, CardTitle, EmptyState, ErrorBanner, FIELD, Fields, Select, Hint, Pill, SectionTitle } from "../components";
-import { useOverview } from "../Layout";
-import type { Category, DiscoverableSensor, Sensor, Zone } from "../types";
+import { moveSensor, removeSensor } from "../patches";
+import { useOverview } from "../overview";
+import type { Category } from "../types";
+import { useConfirm } from "../ui/Confirm";
+import { DetailRow, InsetList, ListRow } from "../ui/List";
+import { Gone } from "../ui/Gone";
+import { Sheet, useRemembered, useSheet } from "../ui/Sheet";
 import { useAction } from "../useAction";
 
-/** Home Assistant's device name wins; the service's stored name is the fallback. */
-const sensorName = (s: Sensor) => s.haName ?? s.name;
+const LIST = "/sensors";
 
-function ZoneSelect({ zones, value, onChange, label }: { zones: Zone[]; value: string; onChange: (v: string) => void; label: string }) {
+function ZoneSelect({ label = "Zone", value, onChange }: { label?: string; value: string; onChange: (v: string) => void }) {
+  const { zones } = useOverview();
   return (
-    <Select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
-      {zones.map((z) => (
-        <option key={z.id} value={z.id}>
-          {z.name}
-        </option>
-      ))}
-    </Select>
-  );
-}
-
-function DiscoveredRow({ d, zones, onAdd }: { d: DiscoverableSensor; zones: Zone[]; onAdd: (p: Record<string, unknown>) => void }) {
-  const [name, setName] = useState(d.haName || d.name || `Node ${d.zwaveNodeId}`);
-  const [category, setCategory] = useState<Category>("intrusion");
-  const [zoneId, setZoneId] = useState(zones[0]?.id ?? "");
-  return (
-    <Card>
-      <CardTitle meta={[d.manufacturer, d.product].filter(Boolean).join(" ") || "unknown device"}>Node {d.zwaveNodeId}</CardTitle>
-      <div className="mt-1.5">
-        <Pill tone={d.status === "alive" ? "ok" : "neutral"}>Status: {d.status}</Pill>
-      </div>
-      <Fields>
-        <input className={`${FIELD} sm:col-span-2`} aria-label="Sensor name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Select aria-label="Category" value={category} onChange={(e) => setCategory(e.target.value as Category)}>
-          <option value="intrusion">Intrusion</option>
-          <option value="life-safety">Life safety</option>
-        </Select>
-        <ZoneSelect zones={zones} value={zoneId} onChange={setZoneId} label="Zone" />
-      </Fields>
-      <Actions>
-        <Button
-          variant="primary"
-          className="w-full sm:w-auto"
-          disabled={!zones.length || !name.trim()}
-          onClick={() => onAdd({ zone_id: zoneId, zwave_node_id: d.zwaveNodeId, name: name.trim(), category })}
-        >
-          Add sensor
-        </Button>
-      </Actions>
-    </Card>
-  );
-}
-
-function AssignedRow({ zone, sensor, zones, run }: { zone: Zone; sensor: Sensor; zones: Zone[]; run: ReturnType<typeof useAction>["run"] }) {
-  const api = useApi();
-  const [zoneId, setZoneId] = useState(zone.id);
-  const name = sensorName(sensor);
-  return (
-    <Card>
-      <div className="flex items-start justify-between gap-3">
-        <CardTitle meta={sensor.category}>{name}</CardTitle>
-        <Pill tone={sensor.currentState === "breached" ? "alert" : "ok"}>{sensor.currentState}</Pill>
-      </div>
-      <Fields className="sm:grid-cols-[1fr_auto_auto]">
-        <ZoneSelect zones={zones} value={zoneId} onChange={setZoneId} label={`Zone for ${name}`} />
-        <Button onClick={() => run(() => api.call("sensor/update", { sensor_id: sensor.id, zone_id: zoneId }))}>Move</Button>
-        <Button variant="danger" onClick={() => run(() => api.call("sensor/unassign", { sensor_id: sensor.id }))}>
-          Unassign
-        </Button>
-      </Fields>
-    </Card>
+    <Field label={label}>
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        {zones.map((z) => (
+          <option key={z.id} value={z.id}>
+            {z.name}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }
 
 export function SensorsPage() {
-  const api = useApi();
   const { zones, discoverable, discoverable_error } = useOverview();
-  const { run, error } = useAction();
   const assigned = zones.flatMap((z) => z.sensors.map((s) => ({ zone: z, sensor: s })));
   return (
     <section>
-      <ErrorBanner message={error} />
       <SectionTitle>Discovered Z-Wave devices</SectionTitle>
       {!zones.length && <Hint>Create a zone first (Zones tab), then assign devices to it.</Hint>}
       {discoverable_error && <ErrorBanner message={new ApiError(discoverable_error.code, discoverable_error.message).message} />}
       {!discoverable.length && !discoverable_error && (
         <EmptyState title="No unassigned devices">No unassigned Z-Wave devices found. Include a device in Z-Wave JS, then reload.</EmptyState>
       )}
-      {discoverable.map((d) => (
-        <DiscoveredRow key={d.zwaveNodeId} d={d} zones={zones} onAdd={(p) => run(() => api.call("sensor/assign", p))} />
-      ))}
+      {discoverable.length > 0 && (
+        <InsetList label="Discovered devices">
+          {discoverable.map((d) => (
+            <ListRow
+              key={d.zwaveNodeId}
+              to={`add/${d.zwaveNodeId}`}
+              icon="plus"
+              title={d.haName || d.name || `Node ${d.zwaveNodeId}`}
+              subtitle={[d.manufacturer, d.product].filter(Boolean).join(" ") || "Unknown device"}
+              trailing={<Pill tone={d.status === "alive" ? "ok" : "neutral"}>{d.status}</Pill>}
+            />
+          ))}
+        </InsetList>
+      )}
       <SectionTitle>Assigned sensors</SectionTitle>
       {!assigned.length && <EmptyState title="No sensors yet">Add a discovered device to a zone and it will appear here.</EmptyState>}
-      {assigned.map(({ zone, sensor }) => (
-        <AssignedRow key={sensor.id} zone={zone} sensor={sensor} zones={zones} run={run} />
-      ))}
+      {assigned.length > 0 && (
+        <InsetList label="Assigned sensors">
+          {assigned.map(({ zone, sensor }) => (
+            <ListRow
+              key={sensor.id}
+              to={sensor.id}
+              icon="sensors"
+              title={sensor.haName ?? sensor.name}
+              subtitle={`${zone.name} · ${sensor.category}`}
+              trailing={<Pill tone={sensor.currentState === "breached" ? "alert" : "ok"}>{sensor.currentState}</Pill>}
+            />
+          ))}
+        </InsetList>
+      )}
+      <Outlet />
     </section>
+  );
+}
+
+export function AddSensorSheet() {
+  const navigate = useNavigate();
+  const { nodeId } = useParams();
+  const { discoverable } = useOverview();
+  const device = useRemembered(discoverable.find((d) => String(d.zwaveNodeId) === nodeId));
+  if (!device) return <Gone to={LIST} />;
+  return (
+    <Sheet title="Add sensor" onClosed={() => navigate(LIST)}>
+      <AddSensorForm key={device.zwaveNodeId} device={device} />
+    </Sheet>
+  );
+}
+
+function AddSensorForm({ device }: { device: ReturnType<typeof useOverview>["discoverable"][number] }) {
+  const api = useApi();
+  const { zones } = useOverview();
+  const { close } = useSheet();
+  const { run, error } = useAction();
+  const [name, setName] = useState(device.haName || device.name || `Node ${device.zwaveNodeId}`);
+  const [category, setCategory] = useState<Category>("intrusion");
+  const [zoneId, setZoneId] = useState(zones[0]?.id ?? "");
+  const add = async () => {
+    const ok = await run(() => api.call("sensor/assign", { zone_id: zoneId, zwave_node_id: device.zwaveNodeId, name: name.trim(), category }), { done: "Sensor added" });
+    if (ok) close();
+  };
+  return (
+    <div className="space-y-3 pt-2">
+      <p className="px-1 text-[15px] text-zinc-500 dark:text-zinc-400">
+        Node {device.zwaveNodeId} · {[device.manufacturer, device.product].filter(Boolean).join(" ") || "Unknown device"}
+      </p>
+      <ErrorBanner message={error} />
+      <Field label="Sensor name">
+        <input className={FIELD} value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field label="Category">
+        <Select value={category} onChange={(e) => setCategory(e.target.value as Category)}>
+          <option value="intrusion">Intrusion</option>
+          <option value="life-safety">Life safety</option>
+        </Select>
+      </Field>
+      <ZoneSelect value={zoneId} onChange={setZoneId} />
+      <Actions>
+        <Button variant="primary" className="w-full" disabled={!zones.length || !name.trim()} onClick={add}>
+          Add sensor
+        </Button>
+      </Actions>
+    </div>
+  );
+}
+
+export function SensorSheet() {
+  const navigate = useNavigate();
+  const { sensorId } = useParams();
+  const { zones } = useOverview();
+  const found = useRemembered(zones.flatMap((z) => z.sensors.map((s) => ({ zone: z, sensor: s }))).find(({ sensor }) => sensor.id === sensorId));
+  if (!found) return <Gone to={LIST} />;
+  return (
+    <Sheet title={found.sensor.haName ?? found.sensor.name} onClosed={() => navigate(LIST)}>
+      <SensorDetail zone={found.zone} sensor={found.sensor} />
+    </Sheet>
+  );
+}
+
+function SensorDetail({ zone, sensor }: { zone: { id: string; name: string }; sensor: ReturnType<typeof useOverview>["zones"][number]["sensors"][number] }) {
+  const api = useApi();
+  const confirm = useConfirm();
+  const { close } = useSheet();
+  const { run, error } = useAction();
+  const [zoneId, setZoneId] = useState(zone.id);
+  const name = sensor.haName ?? sensor.name;
+  const move = () => run(() => api.call("sensor/update", { sensor_id: sensor.id, zone_id: zoneId }), { patch: moveSensor(sensor.id, zoneId), done: "Sensor moved" });
+  const unassign = async () => {
+    const ok = await confirm({ title: `Unassign ${name}?`, message: "It will no longer belong to a zone or trigger the alarm.", confirmLabel: "Unassign" });
+    if (ok && (await run(() => api.call("sensor/unassign", { sensor_id: sensor.id }), { patch: removeSensor(sensor.id), done: "Sensor unassigned" }))) close();
+  };
+  return (
+    <div className="space-y-3 pt-2">
+      <ErrorBanner message={error} />
+      <InsetList label="Details">
+        <DetailRow label="State">
+          <Pill tone={sensor.currentState === "breached" ? "alert" : "ok"}>{sensor.currentState}</Pill>
+        </DetailRow>
+        <DetailRow label="Category">{sensor.category}</DetailRow>
+        <DetailRow label="Z-Wave node">{sensor.zwaveNodeId}</DetailRow>
+        {sensor.connectivityStatus && <DetailRow label="Connection">{sensor.connectivityStatus}</DetailRow>}
+        {sensor.batteryLevel != null && <DetailRow label="Battery">{sensor.batteryLevel}%</DetailRow>}
+      </InsetList>
+      <ZoneSelect value={zoneId} onChange={setZoneId} />
+      <Actions>
+        <Button variant="primary" disabled={zoneId === zone.id} onClick={move}>
+          Move
+        </Button>
+        <Button variant="danger" onClick={unassign}>
+          Unassign
+        </Button>
+      </Actions>
+    </div>
   );
 }
