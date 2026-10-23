@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useRouteError } from "react-router";
+import { NavLink, Outlet, useLocation, useRevalidator, useRouteError } from "react-router";
+import { ApiError } from "./api";
 import { NarrowContext } from "./context";
 import { PatchProvider } from "./overview";
 import { ConfirmProvider } from "./ui/Confirm";
@@ -121,13 +122,23 @@ export function LoadingState() {
 /** Route-level error (the overview load failed): show the message instead of a blank panel. */
 export function LoadError() {
   const err = useRouteError() as Error;
+  const { revalidate, state } = useRevalidator();
   return (
     <div className={ROOT}>
       <div className="mx-auto w-full max-w-3xl px-4 pt-6">
         <h1 className="text-[34px] font-bold tracking-tight">Z-Wave Alarm</h1>
         <div role="alert" className="mt-4 rounded-2xl bg-red-500/10 px-4 py-3 text-[15px] text-red-700 ring-1 ring-red-500/20 dark:text-red-300">
           {err?.message ?? "Failed to load"}
+          {err instanceof ApiError && <div className="mt-1 text-[13px] opacity-70">Error code: {err.code}</div>}
         </div>
+        <button
+          type="button"
+          disabled={state === "loading"}
+          onClick={() => revalidate()}
+          className="mt-4 rounded-full bg-blue-600 px-5 py-2 text-[15px] font-semibold text-white disabled:opacity-50"
+        >
+          Try again
+        </button>
       </div>
     </div>
   );

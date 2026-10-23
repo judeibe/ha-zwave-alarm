@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RouterProvider } from "react-router";
+import { ApiError } from "../api";
 import { ApiContext } from "../context";
 import { createTestRouter } from "../routes";
 import type { Overview } from "../types";
@@ -222,5 +223,23 @@ describe("people and codes", () => {
     await user.click(screen.getByRole("button", { name: "Remove" }));
     await user.click(confirmDialog().getByRole("button", { name: "Remove" }));
     expect(call).toHaveBeenCalledWith("user/delete", { user_id: "u1" });
+  });
+});
+
+describe("load failure", () => {
+  it("explains an unknown_error, shows its code and offers a retry", async () => {
+    const { api } = fakeApi();
+    api.overview = async () => {
+      throw new ApiError("unknown_error", "Unknown error");
+    };
+    render(
+      <ApiContext.Provider value={api}>
+        <RouterProvider router={createTestRouter(api, "/")} />
+      </ApiContext.Provider>,
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/unexpected error handling this request/i);
+    expect(alert).toHaveTextContent("unknown_error");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 });
