@@ -51,6 +51,24 @@ def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] 
     return None
 
 
+def _with_sensor_update(state: StreamState, sensor_id: str, changes: dict[str, Any]) -> StreamState:
+    """Return `state` with `changes` applied to one sensor, copying only the affected zone/sensor dicts.
+
+    The input state is never mutated, so the result is a new object for the
+    coordinator to publish. An unknown `sensor_id` returns `state` unchanged.
+    """
+    for zone_index, zone in enumerate(state.zones):
+        for sensor_index, sensor in enumerate(zone["sensors"]):
+            if sensor["id"] != sensor_id:
+                continue
+            sensors = [*zone["sensors"]]
+            sensors[sensor_index] = {**sensor, **changes}
+            zones = [*state.zones]
+            zones[zone_index] = {**zone, "sensors": sensors}
+            return replace(state, zones=zones)
+    return state
+
+
 def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
     """Apply one server->client event (contracts/websocket-events.md) to `state`, returning the new state."""
     event_type = event.get("type")
@@ -80,18 +98,16 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
         return replace(state, panel=panel)
 
     if event_type == "sensor.changed":
-        sensor = _find_sensor(state.zones, event["sensorId"])
-        if sensor is not None:
-            sensor["currentState"] = event["currentState"]
-            sensor["category"] = event["category"]
-        return state
+        return _with_sensor_update(
+            state, event["sensorId"], {"currentState": event["currentState"], "category": event["category"]}
+        )
 
     if event_type == "sensor.fault":
-        sensor = _find_sensor(state.zones, event["sensorId"])
-        if sensor is not None:
-            sensor["connectivityStatus"] = event["connectivityStatus"]
-            sensor["batteryLevel"] = event["batteryLevel"]
-        return state
+        return _with_sensor_update(
+            state,
+            event["sensorId"],
+            {"connectivityStatus": event["connectivityStatus"], "batteryLevel": event["batteryLevel"]},
+        )
 
     # `event.recorded` and `keypad.event` carry no panel/zone/sensor/keypad state (the coordinator
     # forwards them to the event entities instead), and any future event type this

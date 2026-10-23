@@ -113,6 +113,26 @@ def test_sensor_changed_updates_matching_sensor_only() -> None:
     assert sensors["s2"]["currentState"] == "normal"
 
 
+def test_sensor_events_do_not_mutate_the_original_state() -> None:
+    state = StreamState(panel=None, zones=[_zone("z1", [_sensor("s1"), _sensor("s2")]), _zone("z2", [_sensor("s3")])])
+    changed = {"type": "sensor.changed", "sensorId": "s1", "zoneId": "z1", "currentState": "breached", "category": "intrusion"}
+    fault = {"type": "sensor.fault", "sensorId": "s1", "connectivityStatus": "offline", "batteryLevel": 8}
+
+    after_change = apply_event(state, changed)
+    after_fault = apply_event(after_change, fault)
+
+    assert after_change is not state
+    assert after_change.zones is not state.zones
+    assert state.zones[0]["sensors"][0]["currentState"] == "normal"
+    assert after_change.zones[0]["sensors"][0]["currentState"] == "breached"
+    # Untouched zones are shared, not copied.
+    assert after_change.zones[1] is state.zones[1]
+    assert after_change.zones[0]["sensors"][1] is state.zones[0]["sensors"][1]
+    assert after_change.zones[0]["sensors"][0]["connectivityStatus"] == "online"
+    assert after_fault.zones[0]["sensors"][0]["batteryLevel"] == 8
+    assert after_fault.zones[0]["sensors"][0]["currentState"] == "breached"
+
+
 def test_sensor_changed_unknown_sensor_id_is_noop() -> None:
     state = StreamState(panel=None, zones=[_zone("z1", [_sensor("s1")])])
     event = {"type": "sensor.changed", "sensorId": "unknown", "zoneId": "z1", "currentState": "breached", "category": "intrusion"}
