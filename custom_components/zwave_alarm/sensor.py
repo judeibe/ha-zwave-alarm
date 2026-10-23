@@ -52,6 +52,7 @@ async def async_setup_entry(
 class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], SensorEntity):
     """`sensor.zwave_alarm_fault_count` -- count of sensors currently reporting a fault."""
 
+    _attr_has_entity_name = True  # HA prefixes the device name; entity_id stays the explicit one set below
     _attr_native_unit_of_measurement = "sensors"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:alert-circle-outline"

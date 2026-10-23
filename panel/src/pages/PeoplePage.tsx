@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CODE_RE, CodeInput, ErrorBanner } from "../components";
+import { Actions, Button, Card, CardTitle, CODE_RE, CodeInput, EmptyState, ErrorBanner, Fields, Select, Pill, SectionTitle } from "../components";
 import { useApi } from "../context";
 import { useOverview } from "../Layout";
 import type { AlarmUser, HaPerson, Role } from "../types";
@@ -16,60 +16,61 @@ function PersonCard({ person, user, run }: { person: HaPerson; user?: AlarmUser;
   };
   return (
     <Card>
-      <div>
-        {person.name} <span className="za-muted">— {person.entity_id}</span>
-      </div>
+      <CardTitle meta={person.entity_id}>{person.name}</CardTitle>
       {!user ? (
-        <div className="za-row">
-          <select aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {(["member", "administrator", "guest"] as const).map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-          <CodeInput label={`Code for ${person.name}`} placeholder="Code (4–12 digits, optional)" value={code} onChange={setCode} />
-          <button
-            className="za-act"
-            disabled={code !== "" && !valid}
-            onClick={() =>
-              submit(() =>
-                api.call("user/create", {
-                  name: person.name,
-                  role,
-                  ha_person_id: person.entity_id,
-                  ...(person.user_id && { ha_user_id: person.user_id }),
-                  ...(valid && { code }),
-                }),
-              )
-            }
-          >
-            Onboard
-          </button>
-        </div>
+        <>
+          <Fields>
+            <Select aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+              {(["member", "administrator", "guest"] as const).map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </Select>
+            <CodeInput label={`Code for ${person.name}`} placeholder="Code (4–12 digits, optional)" value={code} onChange={setCode} />
+          </Fields>
+          <Actions>
+            <Button
+              variant="primary"
+              className="w-full sm:w-auto"
+              disabled={code !== "" && !valid}
+              onClick={() =>
+                submit(() =>
+                  api.call("user/create", {
+                    name: person.name,
+                    role,
+                    ha_person_id: person.entity_id,
+                    ...(person.user_id && { ha_user_id: person.user_id }),
+                    ...(valid && { code }),
+                  }),
+                )
+              }
+            >
+              Onboard
+            </Button>
+          </Actions>
+        </>
       ) : (
         <>
-          <div className="za-muted">
-            Alarm user: {user.role}, code {user.hasCode ? "set" : "not set"}
+          <div className="mt-1.5">
+            <Pill tone={user.hasCode ? "ok" : "neutral"}>
+              Alarm user: {user.role}, code {user.hasCode ? "set" : "not set"}
+            </Pill>
           </div>
-          <div className="za-row">
+          <Fields>
             <CodeInput label={`Code for ${person.name}`} placeholder={user.hasCode ? "New code" : "Code (4–12 digits)"} value={code} onChange={setCode} />
-            <button className="za-act" disabled={!valid} onClick={() => submit(() => api.call("user/set_code", { user_id: user.id, code }))}>
+          </Fields>
+          <Actions>
+            <Button variant="primary" disabled={!valid} onClick={() => submit(() => api.call("user/set_code", { user_id: user.id, code }))}>
               {user.hasCode ? "Replace code" : "Set code"}
-            </button>
+            </Button>
             {user.hasCode && (
-              <button
-                className="za-act danger"
-                onClick={() => window.confirm(`Clear ${person.name}'s code?`) && run(() => api.call("user/clear_code", { user_id: user.id }))}
-              >
+              <Button variant="danger" onClick={() => window.confirm(`Clear ${person.name}'s code?`) && run(() => api.call("user/clear_code", { user_id: user.id }))}>
                 Clear code
-              </button>
+              </Button>
             )}
-            <button
-              className="za-act danger"
-              onClick={() => window.confirm(`Remove ${person.name} from the alarm?`) && run(() => api.call("user/delete", { user_id: user.id }))}
-            >
+            <Button variant="danger" onClick={() => window.confirm(`Remove ${person.name} from the alarm?`) && run(() => api.call("user/delete", { user_id: user.id }))}>
               Remove
-            </button>
-          </div>
+            </Button>
+          </Actions>
         </>
       )}
     </Card>
@@ -85,15 +86,15 @@ export function PeoplePage() {
   return (
     <section>
       <ErrorBanner message={error} />
-      <h2>Home Assistant people</h2>
-      {!people.length && <p className="za-muted">No Home Assistant person entities found.</p>}
+      <SectionTitle>Home Assistant people</SectionTitle>
+      {!people.length && <EmptyState title="No people found">No Home Assistant person entities found.</EmptyState>}
       {people.map((p) => (
         <PersonCard key={p.entity_id} person={p} user={byPerson.get(p.entity_id)} run={run} />
       ))}
-      {others.length > 0 && <h2>Other alarm users</h2>}
+      {others.length > 0 && <SectionTitle>Other alarm users</SectionTitle>}
       {others.map((u) => (
         <Card key={u.id}>
-          {u.name} — {u.role}, code {u.hasCode ? "set" : "not set"}
+          <CardTitle meta={`${u.role}, code ${u.hasCode ? "set" : "not set"}`}>{u.name}</CardTitle>
         </Card>
       ))}
     </section>

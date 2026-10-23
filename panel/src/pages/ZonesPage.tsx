@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, ErrorBanner } from "../components";
+import { Actions, Button, Card, EmptyState, ErrorBanner, FIELD, Fields } from "../components";
 import { useApi } from "../context";
 import { useOverview } from "../Layout";
 import type { Zone } from "../types";
@@ -11,33 +11,34 @@ function ZoneCard({ zone, run }: { zone: Zone; run: ReturnType<typeof useAction>
   const [description, setDescription] = useState(zone.description ?? "");
   return (
     <Card>
-      <div className="za-row">
-        <input aria-label="Zone name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input aria-label="Zone description" placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <button
-          className="za-act"
+      <Fields>
+        <input className={FIELD} aria-label="Zone name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className={FIELD} aria-label="Zone description" placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </Fields>
+      <p className="mt-3 text-[15px] text-zinc-500 dark:text-zinc-400">
+        {zone.sensors.length ? `Sensors: ${zone.sensors.map((s) => s.haName ?? s.name).join(", ")}` : "No sensors"}
+      </p>
+      <Actions>
+        <Button
+          variant="primary"
           disabled={!name.trim()}
           onClick={() => run(() => api.call("zone/update", { zone_id: zone.id, name: name.trim(), description: description.trim() || null }))}
         >
           Save
-        </button>
-        <button
-          className="za-act danger"
-          onClick={() => window.confirm(`Delete zone "${zone.name}"?`) && run(() => api.call("zone/delete", { zone_id: zone.id }))}
-        >
+        </Button>
+        <Button variant="danger" onClick={() => window.confirm(`Delete zone "${zone.name}"?`) && run(() => api.call("zone/delete", { zone_id: zone.id }))}>
           Delete
-        </button>
-        <button
-          className="za-act danger"
+        </Button>
+        <Button
+          variant="danger"
           onClick={() =>
             window.confirm(`Delete "${zone.name}" and unassign its ${zone.sensors.length} sensor(s)?`) &&
             run(() => api.call("zone/delete", { zone_id: zone.id, force: true }))
           }
         >
           Force delete
-        </button>
-      </div>
-      <div className="za-muted">{zone.sensors.length ? `Sensors: ${zone.sensors.map((s) => s.name).join(", ")}` : "No sensors"}</div>
+        </Button>
+      </Actions>
     </Card>
   );
 }
@@ -52,11 +53,14 @@ export function ZonesPage() {
     <section>
       <ErrorBanner message={error} />
       <Card>
-        <div className="za-row">
-          <input aria-label="New zone name" placeholder="Zone name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input aria-label="New zone description" placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
-          <button
-            className="za-act"
+        <Fields>
+          <input className={FIELD} aria-label="New zone name" placeholder="Zone name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className={FIELD} aria-label="New zone description" placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Fields>
+        <Actions>
+          <Button
+            variant="primary"
+            className="w-full sm:w-auto"
             disabled={!name.trim()}
             onClick={async () => {
               const payload = { name: name.trim(), ...(description.trim() && { description: description.trim() }) };
@@ -67,9 +71,10 @@ export function ZonesPage() {
             }}
           >
             Create zone
-          </button>
-        </div>
+          </Button>
+        </Actions>
       </Card>
+      {!zones.length && <EmptyState title="No zones yet">Name your first zone above, such as Downstairs or Garage.</EmptyState>}
       {zones.map((z) => (
         <ZoneCard key={z.id} zone={z} run={run} />
       ))}

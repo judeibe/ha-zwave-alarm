@@ -16,6 +16,7 @@ from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 import zwave_alarm_client as api
@@ -109,6 +110,33 @@ def _ha_people(hass: HomeAssistant) -> list[dict[str, Any]]:
     ]
 
 
+def _zwave_device_names(hass: HomeAssistant) -> dict[int, str]:
+    """Z-Wave node id -> the name Home Assistant shows for its device (the user's rename wins).
+
+    Z-Wave JS registers each node as a device with identifier ("zwave_js", "<home_id>-<node_id>").
+    """
+    names: dict[int, str] = {}
+    for device in dr.async_get(hass).devices.values():
+        for domain, ident in device.identifiers:
+            node_id = ident.rpartition("-")[2]
+            if domain == "zwave_js" and node_id.isdigit() and (name := device.name_by_user or device.name):
+                names[int(node_id)] = name
+    return names
+
+
+def _with_ha_names(zones: list[dict[str, Any]], discoverable: list[dict[str, Any]], names: dict[int, str]):
+    """Attach `haName` to every discoverable node and assigned sensor whose Z-Wave device HA knows."""
+
+    def tag(item: dict[str, Any]) -> dict[str, Any]:
+        name = names.get(item.get("zwaveNodeId"))
+        return {**item, "haName": name} if name else item
+
+    return (
+        [{**zone, "sensors": [tag(s) for s in zone.get("sensors", [])]} for zone in zones],
+        [tag(d) for d in discoverable],
+    )
+
+
 async def _ha_users(hass: HomeAssistant) -> list[dict[str, Any]]:
     return [
         {"id": u.id, "name": u.name, "is_admin": u.is_admin}
@@ -127,6 +155,7 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         discoverable, discoverable_error = await call(api.async_list_discoverable_sensors), None
     except api.ServiceUnavailable as err:
         discoverable, discoverable_error = [], {"code": "service_unavailable", "message": str(err)}
+    zones, discoverable = _with_ha_names(zones, discoverable, _zwave_device_names(hass))
     return {
         "zones": zones,
         "discoverable": discoverable,

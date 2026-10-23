@@ -9,6 +9,8 @@ export interface Sensor {
   name: string;
   category: Category;
   currentState: "normal" | "breached";
+  /** The Z-Wave device's name in Home Assistant (device registry); absent when HA doesn't know the node. */
+  haName?: string;
 }
 export interface Zone {
   id: string;
@@ -22,6 +24,8 @@ export interface DiscoverableSensor {
   manufacturer: string | null;
   product: string | null;
   status: "alive" | "dead" | "asleep";
+  /** The Z-Wave device's name in Home Assistant (device registry); absent when HA doesn't know the node. */
+  haName?: string;
 }
 /** A user never carries a code, only whether one is set. */
 export interface AlarmUser {

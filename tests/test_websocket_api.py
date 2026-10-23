@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -53,6 +54,28 @@ async def test_overview(hass, hass_ws_client, entry) -> None:
     assert resp["result"]["discoverable"] == [{"zwaveNodeId": 5}]
     assert resp["result"]["discoverable_error"] is None
     assert resp["result"]["ha_people"] == [{"entity_id": "person.alex", "name": "Alex", "user_id": "abc"}]
+
+
+async def test_overview_names_sensors_after_their_ha_device(hass, hass_ws_client, entry) -> None:
+    registry = dr.async_get(hass)
+    registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("zwave_js", "3458-5")}, name="Hallway door"
+    )
+    renamed = registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("zwave_js", "3458-9")}, name="Door sensor"
+    )
+    registry.async_update_device(renamed.id, name_by_user="Back door")
+    zone = {**ZONE, "sensors": [{"id": "s1", "zwaveNodeId": 9, "name": "stored"}, {"id": "s2", "zwaveNodeId": 77, "name": "x"}]}
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[zone])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[{"zwaveNodeId": 5}])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["result"]["discoverable"] == [{"zwaveNodeId": 5, "haName": "Hallway door"}]
+    sensors = resp["result"]["zones"][0]["sensors"]
+    assert sensors[0]["haName"] == "Back door"  # the user's rename wins
+    assert "haName" not in sensors[1]  # unknown to HA: the panel falls back to the stored name
 
 
 async def test_overview_degrades_when_the_driver_is_not_ready(hass, hass_ws_client, entry) -> None:

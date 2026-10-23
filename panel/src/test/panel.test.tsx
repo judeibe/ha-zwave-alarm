@@ -62,6 +62,22 @@ describe("sensors", () => {
     expect(screen.getByText("Front door")).toBeInTheDocument();
   });
 
+  it("names sensors after their Home Assistant device, falling back to the stored name", async () => {
+    const { api } = fakeApi({
+      ...OVERVIEW,
+      zones: [{ ...OVERVIEW.zones[0]!, sensors: [{ ...OVERVIEW.zones[0]!.sensors[0]!, haName: "Hallway door sensor" }] }, OVERVIEW.zones[1]!],
+      discoverable: [{ ...OVERVIEW.discoverable[0]!, haName: "Garage door sensor" }],
+    });
+    render(
+      <ApiContext.Provider value={api}>
+        <RouterProvider router={createTestRouter(api, "/sensors")} />
+      </ApiContext.Provider>,
+    );
+    expect(await screen.findByText("Hallway door sensor")).toBeInTheDocument();
+    expect(screen.queryByText("Front door")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Sensor name")).toHaveValue("Garage door sensor");
+  });
+
   it("adds a discovered node to the chosen zone", async () => {
     const { call, user } = setup("/sensors");
     await user.selectOptions(await screen.findByLabelText("Category"), "life-safety");

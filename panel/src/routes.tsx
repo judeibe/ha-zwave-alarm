@@ -1,6 +1,6 @@
 import { createBrowserRouter, createMemoryRouter, Navigate, type RouteObject } from "react-router";
 import type { Api } from "./api";
-import { Layout, LoadError } from "./Layout";
+import { Layout, LoadError, LoadingState } from "./Layout";
 import { PeoplePage } from "./pages/PeoplePage";
 import { SensorsPage } from "./pages/SensorsPage";
 import { ZonesPage } from "./pages/ZonesPage";
@@ -13,7 +13,7 @@ export function createRoutes(api: Api): RouteObject[] {
       Component: Layout,
       ErrorBoundary: LoadError,
       loader: () => api.overview(),
-      HydrateFallback: () => <p className="za-muted">Loading…</p>,
+      HydrateFallback: LoadingState,
       children: [
         { index: true, element: <Navigate to="sensors" replace /> },
         { path: "sensors", Component: SensorsPage },
