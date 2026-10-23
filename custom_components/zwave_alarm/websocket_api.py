@@ -116,13 +116,20 @@ def _ha_people(hass: HomeAssistant) -> list[dict[str, Any]]:
 def _zwave_device_names(hass: HomeAssistant) -> dict[int, str]:
     """Z-Wave node id -> the name Home Assistant shows for its device (the user's rename wins).
 
-    Z-Wave JS registers each node as a device with identifier ("zwave_js", "<home_id>-<node_id>").
+    Z-Wave JS registers each node as a device with identifier ("zwave_js", "<home_id>-<node_id>"). Other
+    integrations may register longer or malformed identifiers, so only well-formed ones are read, by their
+    first two items.
     """
     names: dict[int, str] = {}
     for device in dr.async_get(hass).devices.values():
-        for domain, ident in device.identifiers:
+        for identifier in device.identifiers:
+            if not isinstance(identifier, (tuple, list)) or len(identifier) < 2:
+                continue
+            domain, ident = identifier[:2]
+            if domain != "zwave_js" or not isinstance(ident, str):
+                continue
             node_id = ident.rpartition("-")[2]
-            if domain == "zwave_js" and node_id.isdigit() and (name := device.name_by_user or device.name):
+            if node_id.isdigit() and (name := device.name_by_user or device.name):
                 names[int(node_id)] = name
     return names
 
