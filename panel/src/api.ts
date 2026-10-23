@@ -13,6 +13,7 @@ export const ERROR_TEXT: Record<string, string> = {
   invalid_auth: "The service rejected the stored token. Re-authenticate the integration.",
   forbidden: "The service denied this action.",
   entry_not_found: "The Z-Wave Alarm integration is not loaded.",
+  unknown_error: "Home Assistant hit an unexpected error handling this request. Check the Home Assistant log for the zwave_alarm integration.",
 };
 
 export class ApiError extends Error {
