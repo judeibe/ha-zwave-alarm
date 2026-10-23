@@ -14,8 +14,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import zwave_alarm_client as api
 from custom_components.zwave_alarm.const import CONF_SSL, DOMAIN
+from custom_components.zwave_alarm.websocket_api import _zwave_device_names
 
-API = "custom_components.zwave_alarm.websocket_api.api"
+WS = "custom_components.zwave_alarm.websocket_api"
+API = f"{WS}.api"
 ZONE = {"id": "z1", "name": "Downstairs", "sensors": []}
 OK_SENSOR = {"connectivityStatus": "online", "batteryLevel": 90}
 USER = {"id": "u1", "name": "Alex", "role": "member", "hasCode": True, "haPersonId": "person.alex", "haUserId": None}
@@ -78,6 +80,31 @@ async def test_overview_names_sensors_after_their_ha_device(hass, hass_ws_client
     sensors = resp["result"]["zones"][0]["sensors"]
     assert sensors[0]["haName"] == "Back door"  # the user's rename wins
     assert "haName" not in sensors[1]  # unknown to HA: the panel falls back to the stored name
+
+
+async def test_overview_ignores_devices_with_longer_identifiers(hass, hass_ws_client, entry) -> None:
+    registry = dr.async_get(hass)
+    registry.async_get_or_create(config_entry_id=entry.entry_id, identifiers={("other", "a", "b")}, name="Odd device")
+    registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("zwave_js", "3458-5")}, name="Hallway door"
+    )
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[ZONE])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[{"zwaveNodeId": 5}])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["success"]
+    assert resp["result"]["discoverable"] == [{"zwaveNodeId": 5, "haName": "Hallway door"}]
+
+
+@pytest.mark.parametrize("identifier", [(), ("zwave_js",), ("zwave_js", 5), ("zwave_js", None, "x"), "zwave_js", 5])
+def test_zwave_device_names_skips_malformed_identifiers(hass, identifier) -> None:
+    good = SimpleNamespace(identifiers={("zwave_js", "3458-5")}, name="Hallway door", name_by_user=None)
+    bad = SimpleNamespace(identifiers={identifier}, name="Odd device", name_by_user=None)
+    registry = SimpleNamespace(devices={"good": good, "bad": bad})
+    with patch(f"{WS}.dr.async_get", return_value=registry):
+        assert _zwave_device_names(hass) == {5: "Hallway door"}
 
 
 async def test_overview_summarises_alarm_state_and_faults(hass, hass_ws_client, entry) -> None:
