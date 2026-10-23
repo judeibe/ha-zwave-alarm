@@ -22,6 +22,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import zwave_alarm_client as api
 
 from .const import CONF_SSL, DOMAIN
+from .fault_state import faulted_sensors
+from .panel_state import map_panel_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ class _Call:
     """A resolved config entry plus the connection args the client's `async_*` functions take."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self.entry = entry
         self.args = (
             async_get_clientsession(hass),
             entry.data[CONF_HOST],
@@ -137,6 +140,33 @@ def _with_ha_names(zones: list[dict[str, Any]], discoverable: list[dict[str, Any
     )
 
 
+def _panel_summary(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any] | None:
+    """The alarm's live state from the coordinator (what the dashboard headlines), or `None` before the first snapshot."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    panel = coordinator.data.panel if coordinator is not None and coordinator.data is not None else None
+    if not panel:
+        return None
+    try:
+        state = map_panel_mode(panel["mode"])
+    except (KeyError, ValueError):
+        state = None
+    return {
+        "state": state,
+        "armed_mode": panel.get("armedMode"),
+        "pending_delay_ends_at": panel.get("pendingDelayEndsAt"),
+    }
+
+
+def _fault_summary(zones: list[dict[str, Any]]) -> dict[str, int]:
+    """Counts of faulted sensors overall and by reason, for the dashboard's health card."""
+    faults = faulted_sensors(zones)
+    return {
+        "fault_count": len(faults),
+        "offline": sum("offline" in f["reasons"] for f in faults),
+        "low_battery": sum("low_battery" in f["reasons"] for f in faults),
+    }
+
+
 async def _ha_users(hass: HomeAssistant) -> list[dict[str, Any]]:
     return [
         {"id": u.id, "name": u.name, "is_admin": u.is_admin}
@@ -155,8 +185,12 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         discoverable, discoverable_error = await call(api.async_list_discoverable_sensors), None
     except api.ServiceUnavailable as err:
         discoverable, discoverable_error = [], {"code": "service_unavailable", "message": str(err)}
+    faults = _fault_summary(zones)
     zones, discoverable = _with_ha_names(zones, discoverable, _zwave_device_names(hass))
     return {
+        "panel": _panel_summary(hass, call.entry),
+        "fault_count": faults["fault_count"],
+        "faults": {"offline": faults["offline"], "low_battery": faults["low_battery"]},
         "zones": zones,
         "discoverable": discoverable,
         "discoverable_error": discoverable_error,
