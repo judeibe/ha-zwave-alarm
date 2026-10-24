@@ -34,6 +34,14 @@ from .coordinator import ZwaveAlarmCoordinator
 from .fault_state import count_faulted_sensors, faulted_sensors
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
 from .keypad_state import keypad_battery_level
+from .lock_state import (
+    DIAGNOSTIC_COUNTERS,
+    lock_battery_level,
+    lock_diagnostics,
+    occupied_slot_count,
+    occupied_slots,
+)
+from .schlage import ZwaveAlarmLockEntity, async_add_lock_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +55,16 @@ async def async_setup_entry(
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadBatterySensor(c, e, keypad)]
     )
+    async_add_lock_entities(coordinator, entry, async_add_entities, _lock_sensors)
+
+
+def _lock_sensors(coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> list[SensorEntity]:
+    return [
+        ZwaveAlarmLockBatterySensor(coordinator, entry, lock),
+        *(ZwaveAlarmLockCounterSensor(coordinator, entry, lock, key) for key in DIAGNOSTIC_COUNTERS),
+        ZwaveAlarmLockOccupiedSlotsSensor(coordinator, entry, lock),
+        ZwaveAlarmLockBootloaderSensor(coordinator, entry, lock),
+    ]
 
 
 class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], SensorEntity):
@@ -104,3 +122,81 @@ class ZwaveAlarmKeypadBatterySensor(ZwaveAlarmKeypadEntity, SensorEntity):
     def native_value(self) -> int | None:
         keypad = self._keypad()
         return keypad_battery_level(keypad) if keypad is not None else None
+
+
+class ZwaveAlarmLockBatterySensor(ZwaveAlarmLockEntity, SensorEntity):
+    """A lock's battery percentage; unknown while the lock reports no level."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, lock, "battery")
+
+    @property
+    def native_value(self) -> int | None:
+        lock = self._lock()
+        return lock_battery_level(lock) if lock is not None else None
+
+
+class ZwaveAlarmLockCounterSensor(ZwaveAlarmLockEntity, SensorEntity):
+    """One of the lock's read-only lifetime counters (transitions, failed attempts)."""
+
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], key: str) -> None:
+        super().__init__(coordinator, entry, lock, key)
+        self._key = key
+        self._attr_translation_key = _snake(key)
+
+    @property
+    def native_value(self) -> int | None:
+        lock = self._lock()
+        value = lock_diagnostics(lock).get(self._key) if lock is not None else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+class ZwaveAlarmLockOccupiedSlotsSensor(ZwaveAlarmLockEntity, SensorEntity):
+    """How many user code slots hold a code; the slot numbers are an attribute (parameter 0x06)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "occupied_slots"
+    _attr_icon = "mdi:account-key"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, lock, "occupied_slots")
+
+    @property
+    def native_value(self) -> int | None:
+        lock = self._lock()
+        return occupied_slot_count(lock) if lock is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[int]] | None:
+        lock = self._lock()
+        return {"slots": occupied_slots(lock)} if lock is not None else None
+
+
+class ZwaveAlarmLockBootloaderSensor(ZwaveAlarmLockEntity, SensorEntity):
+    """The lock's bootloader version (parameter 0x12)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "bootloader_version"
+    _attr_icon = "mdi:chip"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, lock, "bootloader_version")
+
+    @property
+    def native_value(self) -> int | None:
+        lock = self._lock()
+        value = lock_diagnostics(lock).get("bootloaderVersion") if lock is not None else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _snake(key: str) -> str:
+    return "".join(f"_{c.lower()}" if c.isupper() else c for c in key)

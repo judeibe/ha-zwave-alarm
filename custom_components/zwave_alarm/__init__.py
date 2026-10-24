@@ -31,7 +31,7 @@ from .keypad import keypad_device_identifier
 from .panel import async_register_panel, async_remove_panel
 from .websocket_api import async_register_commands
 
-PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "sensor"]
+PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "number", "select", "sensor", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 

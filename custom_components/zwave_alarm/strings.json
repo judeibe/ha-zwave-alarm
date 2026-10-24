@@ -56,6 +56,92 @@
     "binary_sensor": {
       "keypad_connectivity": {
         "name": "Connectivity"
+      },
+      "lock_connectivity": {
+        "name": "Connectivity"
+      }
+    },
+    "switch": {
+      "beeper": {
+        "name": "Beeper"
+      },
+      "vacation_mode": {
+        "name": "Vacation mode"
+      },
+      "lock_and_leave": {
+        "name": "Lock & Leave"
+      },
+      "auto_lock": {
+        "name": "Auto lock"
+      },
+      "local_controls": {
+        "name": "Local controls"
+      }
+    },
+    "select": {
+      "alarm_mode": {
+        "name": "Alarm mode",
+        "state": {
+          "off": "Off",
+          "alert": "Alert",
+          "tamper": "Tamper",
+          "forced_entry": "Forced entry"
+        }
+      },
+      "alert_sensitivity": {
+        "name": "Alert sensitivity",
+        "state": {
+          "most_sensitive": "Most sensitive",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "least_sensitive": "Least sensitive"
+        }
+      },
+      "tamper_sensitivity": {
+        "name": "Tamper sensitivity",
+        "state": {
+          "most_sensitive": "Most sensitive",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "least_sensitive": "Least sensitive"
+        }
+      },
+      "kick_sensitivity": {
+        "name": "Kick sensitivity",
+        "state": {
+          "most_sensitive": "Most sensitive",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "least_sensitive": "Least sensitive"
+        }
+      }
+    },
+    "number": {
+      "pin_length": {
+        "name": "PIN length"
+      }
+    },
+    "sensor": {
+      "electronic_transition_count": {
+        "name": "Electronic transitions"
+      },
+      "mechanical_transition_count": {
+        "name": "Mechanical transitions"
+      },
+      "electronic_failed_count": {
+        "name": "Electronic failed transitions"
+      },
+      "electronic_high_preload_transition_count": {
+        "name": "Electronic high preload transitions"
+      },
+      "occupied_slots": {
+        "name": "Occupied user slots"
+      },
+      "bootloader_version": {
+        "name": "Bootloader version"
       }
     }
   },

@@ -31,6 +31,27 @@ KEYPAD = {
     "chimeSounds": ["double_beep", "guitar", "wind_chimes", "bing_bong", "doorbell"],
     "connectivityStatus": "online", "batteryLevel": 87,
 }
+BE469 = {
+    "nodeId": 21, "adapterId": "schlage-be469", "label": "Front Door Lock", "model": "BE469",
+    "capabilities": ["config", "schedules", "alarm_config"], "connectivityStatus": "online", "batteryLevel": 80,
+    "config": {
+        "beeper": True, "vacationMode": False, "lockAndLeave": False, "autoLock": True, "pinLength": 4,
+        "alarmMode": "alert", "alertSensitivity": 3, "tamperSensitivity": 1, "kickSensitivity": 0, "localControlsEnabled": True,
+    },
+    "diagnostics": {
+        "electronicTransitionCount": 120, "mechanicalTransitionCount": 14, "electronicFailedCount": 2,
+        "electronicHighPreloadTransitionCount": 1, "occupiedSlots": [1, 2, 9], "bootloaderVersion": 3,
+    },
+    "scheduleSlots": {"weekDay": 7, "yearDay": 7, "dailyRepeating": 7},
+}
+BE468 = {
+    "nodeId": 22, "adapterId": "schlage-be468", "label": "Back Door Lock", "model": "BE468",
+    "capabilities": ["config", "schedules"], "connectivityStatus": "online", "batteryLevel": 55,
+    "config": {"beeper": False, "vacationMode": True, "lockAndLeave": True, "autoLock": False, "pinLength": 6},
+    "diagnostics": {"electronicTransitionCount": 3, "mechanicalTransitionCount": 0, "electronicFailedCount": 0,
+                    "electronicHighPreloadTransitionCount": 0, "occupiedSlots": [], "bootloaderVersion": 2},
+    "scheduleSlots": {"weekDay": 4, "yearDay": 4},
+}
 PANEL = {"mode": "armed_away", "pendingDelayEndsAt": None, "disarmedZoneIds": []}
 
 
@@ -44,6 +65,7 @@ class FakeService:
         self.disarm_response: dict[str, Any] = {"mode": "disarmed", "pendingDelayEndsAt": None}
         self.disarm_calls: list[dict] = []
         self.keypads: list[dict] | None = [copy.deepcopy(KEYPAD)]
+        self.locks: list[dict] | None = None
         self.chime_calls: list[dict] = []
         self.chime_status = 204
         self.auth_headers: list[str | None] = []
@@ -77,6 +99,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.locks is not None:
+            snapshot["locks"] = copy.deepcopy(self.locks)
         await ws.send_json(snapshot)
         self.connected.set()
         async for msg in ws:
@@ -468,3 +492,216 @@ async def test_chime_service_maps_unreachable_service(hass: HomeAssistant, servi
         await hass.services.async_call(
             DOMAIN, "keypad_chime", {"device_id": _keypad_device_id(hass, entry), "sound": "doorbell"}, blocking=True
         )
+
+
+# --- Schlage locks -----------------------------------------------------------------------------------------------------
+
+
+class LockClient:
+    """Stands in for the client's lock calls (shipped in zwave-alarm-client 0.5.0), recording what the integration sends."""
+
+    def __init__(self, service: FakeService) -> None:
+        self.service = service
+        self.calls: list[tuple] = []
+        self.error: Exception | None = None
+        self.schedules: dict = {"enabled": True, "weekDay": [], "yearDay": [], "dailyRepeating": []}
+
+    def _record(self, name: str, *args, **kwargs) -> None:
+        self.calls.append((name, *args, *([kwargs] if kwargs else [])))
+        if self.error is not None:
+            raise self.error
+
+    async def update_config(self, session, host, port, token, node_id, update, *, secure=False):
+        self._record("update_config", node_id, dict(update))
+        lock = next(lk for lk in self.service.locks if lk["nodeId"] == node_id)
+        lock["config"] = {**lock["config"], **update}
+        return copy.deepcopy(lock)
+
+    async def get_schedules(self, session, host, port, token, node_id, user_id, *, secure=False):
+        self._record("get_schedules", node_id, user_id)
+        return self.schedules
+
+    async def set_schedule(self, session, host, port, token, node_id, user_id, kind, slot, schedule, *, secure=False):
+        self._record("set_schedule", node_id, user_id, kind, slot, dict(schedule))
+
+    async def clear_schedule(self, session, host, port, token, node_id, user_id, kind, slot, *, secure=False):
+        self._record("clear_schedule", node_id, user_id, kind, slot)
+
+    async def set_enabled(self, session, host, port, token, node_id, enabled, user_id=None, *, secure=False):
+        self._record("set_enabled", node_id, enabled, user_id)
+
+
+@pytest.fixture
+def lock_client(service: FakeService, monkeypatch) -> LockClient:
+    service.locks = [copy.deepcopy(BE469), copy.deepcopy(BE468)]
+    client = LockClient(service)
+    for name, method in (
+        ("async_update_lock_config", client.update_config),
+        ("async_get_lock_schedules", client.get_schedules),
+        ("async_set_lock_schedule", client.set_schedule),
+        ("async_clear_lock_schedule", client.clear_schedule),
+        ("async_set_lock_schedules_enabled", client.set_enabled),
+    ):
+        monkeypatch.setattr(api, name, method, raising=False)  # absent from the client until its next release
+    return client
+
+
+def _lock_device_id(hass: HomeAssistant, entry: MockConfigEntry, node_id: int = 21) -> str:
+    return _device(hass, entry, f"{entry.entry_id}_lock_{node_id}").id
+
+
+async def test_be469_gets_every_lock_entity(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    device = _device(hass, entry, f"{entry.entry_id}_lock_21")
+    assert (device.name, device.manufacturer, device.model) == ("Front Door Lock", "Schlage", "BE469")
+
+    expected = {
+        "switch.front_door_lock_beeper": "on",
+        "switch.front_door_lock_vacation_mode": "off",
+        "switch.front_door_lock_lock_leave": "off",
+        "switch.front_door_lock_auto_lock": "on",
+        "switch.front_door_lock_local_controls": "on",
+        "select.front_door_lock_alarm_mode": "alert",
+        "select.front_door_lock_alert_sensitivity": "medium",
+        "select.front_door_lock_tamper_sensitivity": "most_sensitive",
+        "select.front_door_lock_kick_sensitivity": "unknown",  # 0 means the sensor isn't supported
+        "number.front_door_lock_pin_length": "4",
+        "sensor.front_door_lock_battery": "80",
+        "sensor.front_door_lock_electronic_transitions": "120",
+        "sensor.front_door_lock_mechanical_transitions": "14",
+        "sensor.front_door_lock_electronic_failed_transitions": "2",
+        "sensor.front_door_lock_electronic_high_preload_transitions": "1",
+        "sensor.front_door_lock_occupied_user_slots": "3",
+        "sensor.front_door_lock_bootloader_version": "3",
+        "binary_sensor.front_door_lock_connectivity": "on",
+    }
+    for entity_id, state in expected.items():
+        assert hass.states.get(entity_id).state == state, entity_id
+    assert hass.states.get("sensor.front_door_lock_occupied_user_slots").attributes["slots"] == [1, 2, 9]
+
+
+async def test_be468_has_no_alarm_entities(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get("switch.back_door_lock_vacation_mode").state == "on"
+    assert hass.states.get("number.back_door_lock_pin_length").state == "6"
+    for entity_id in (
+        "switch.back_door_lock_local_controls", "select.back_door_lock_alarm_mode",
+        "select.back_door_lock_alert_sensitivity", "select.back_door_lock_tamper_sensitivity",
+        "select.back_door_lock_kick_sensitivity",
+    ):
+        assert hass.states.get(entity_id) is None, entity_id
+
+
+async def test_snapshot_without_locks_creates_none(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get("switch.front_door_lock_beeper") is None
+
+
+async def test_switch_writes_the_parameter_and_updates_at_once(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.front_door_lock_beeper"}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.front_door_lock_local_controls"}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.back_door_lock_beeper"}, blocking=True)
+
+    assert lock_client.calls == [
+        ("update_config", 21, {"beeper": False}),
+        ("update_config", 21, {"localControlsEnabled": True}),
+        ("update_config", 22, {"beeper": True}),
+    ]
+    assert hass.states.get("switch.front_door_lock_beeper").state == "off"
+    assert hass.states.get("switch.back_door_lock_beeper").state == "on"
+
+
+async def test_selects_write_option_values(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": "select.front_door_lock_alarm_mode", "option": "forced_entry"}, blocking=True
+    )
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": "select.front_door_lock_kick_sensitivity", "option": "least_sensitive"}, blocking=True
+    )
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": "select.front_door_lock_alert_sensitivity", "option": "low"}, blocking=True
+    )
+
+    assert lock_client.calls == [
+        ("update_config", 21, {"alarmMode": "forced_entry"}),
+        ("update_config", 21, {"kickSensitivity": 5}),
+        ("update_config", 21, {"alertSensitivity": 4}),
+    ]
+    assert hass.states.get("select.front_door_lock_alarm_mode").state == "forced_entry"
+    assert hass.states.get("select.front_door_lock_kick_sensitivity").state == "least_sensitive"
+
+
+async def test_pin_length_is_limited_to_4_through_8(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("number", "set_value", {"entity_id": "number.front_door_lock_pin_length", "value": 8}, blocking=True)
+    for bad in (3, 9):
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                "number", "set_value", {"entity_id": "number.front_door_lock_pin_length", "value": bad}, blocking=True
+            )
+
+    assert lock_client.calls == [("update_config", 21, {"pinLength": 8})]
+    assert hass.states.get("number.front_door_lock_pin_length").state == "8"
+
+
+@pytest.mark.parametrize(("error", "expected"), [
+    (api.BadRequest("pinLength out of range"), ServiceValidationError),
+    (api.NotFound("no such lock"), ServiceValidationError),
+    (api.InvalidAuth(), HomeAssistantError),
+    (api.CannotConnect(), HomeAssistantError),
+])
+async def test_lock_write_errors_map_to_home_assistant_errors(hass, service, setup, lock_client, error, expected) -> None:
+    await setup()
+    await _settle(hass, service)
+    lock_client.error = error
+
+    with pytest.raises(expected) as caught:
+        await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.front_door_lock_beeper"}, blocking=True)
+    assert type(caught.value) is expected
+    assert hass.states.get("switch.front_door_lock_beeper").state == "on"  # a failed write leaves the state untouched
+
+
+async def test_lock_changed_updates_entities_and_discovers_new_locks(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    changed = {**BE469, "batteryLevel": 9, "connectivityStatus": "offline",
+               "config": {**BE469["config"], "vacationMode": True}, "diagnostics": {**BE469["diagnostics"], "occupiedSlots": [4]}}
+    await _push(hass, service, {"type": "lock.changed", "lock": changed})
+    assert hass.states.get("sensor.front_door_lock_battery").state == "9"
+    assert hass.states.get("binary_sensor.front_door_lock_connectivity").state == "off"
+    assert hass.states.get("switch.front_door_lock_vacation_mode").state == "on"
+    assert hass.states.get("sensor.front_door_lock_occupied_user_slots").state == "1"
+
+    await _push(hass, service, {"type": "lock.changed", "lock": {**BE468, "nodeId": 30, "label": "Garage Lock"}})
+    assert hass.states.get("switch.garage_lock_beeper").state == "off"
+    assert hass.states.get("select.garage_lock_alarm_mode") is None
+
+
+async def test_lock_entities_unavailable_while_disconnected(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await service.drop_connections()
+    await asyncio.sleep(0.1)
+    await hass.async_block_till_done()
+
+    for entity_id in (
+        "switch.front_door_lock_beeper", "select.front_door_lock_alarm_mode", "number.front_door_lock_pin_length",
+        "sensor.front_door_lock_battery", "binary_sensor.front_door_lock_connectivity",
+    ):
+        assert hass.states.get(entity_id).state == "unavailable"

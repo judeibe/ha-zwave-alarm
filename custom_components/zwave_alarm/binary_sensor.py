@@ -33,6 +33,8 @@ from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
 from .keypad_state import keypad_is_online
+from .lock_state import lock_is_online
+from .schlage import ZwaveAlarmLockEntity, async_add_lock_entities
 from .zone_state import zone_is_breached, zone_is_disarmed, zone_sensor_attributes
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +67,9 @@ async def async_setup_entry(
 
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadConnectivitySensor(c, e, keypad)]
+    )
+    async_add_lock_entities(
+        coordinator, entry, async_add_entities, lambda c, e, lock: [ZwaveAlarmLockConnectivitySensor(c, e, lock)]
     )
 
 
@@ -142,3 +147,19 @@ class ZwaveAlarmKeypadConnectivitySensor(ZwaveAlarmKeypadEntity, BinarySensorEnt
     def is_on(self) -> bool | None:
         keypad = self._keypad()
         return keypad_is_online(keypad) if keypad is not None else None
+
+
+class ZwaveAlarmLockConnectivitySensor(ZwaveAlarmLockEntity, BinarySensorEntity):
+    """Whether a lock is reachable, from the snapshot and `lock.changed`."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "lock_connectivity"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, lock, "connectivity")
+
+    @property
+    def is_on(self) -> bool | None:
+        lock = self._lock()
+        return lock_is_online(lock) if lock is not None else None
