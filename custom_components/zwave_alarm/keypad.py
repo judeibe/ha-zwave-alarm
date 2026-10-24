@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .nodes import async_add_node_entities
 
 
 def keypad_device_identifier(entry_id: str, node_id: int) -> tuple[str, str]:
@@ -43,18 +44,7 @@ def async_add_keypad_entities(
     factory: Callable[[ZwaveAlarmCoordinator, ConfigEntry, dict[str, Any]], list[Entity]],
 ) -> None:
     """Add `factory(coordinator, entry, keypad)` entities for every keypad, now and as new ones are discovered."""
-    known_node_ids: set[int] = set()
-
-    @callback
-    def _add_new_keypads() -> None:
-        if coordinator.data is None:
-            return
-        new_keypads = [k for k in coordinator.data.keypads if k["nodeId"] not in known_node_ids]
-        known_node_ids.update(k["nodeId"] for k in new_keypads)
-        async_add_entities([entity for keypad in new_keypads for entity in factory(coordinator, entry, keypad)])
-
-    _add_new_keypads()
-    entry.async_on_unload(coordinator.async_add_listener(_add_new_keypads))
+    async_add_node_entities(coordinator, entry, async_add_entities, "keypads", factory)
 
 
 class ZwaveAlarmKeypadEntity(CoordinatorEntity[ZwaveAlarmCoordinator]):

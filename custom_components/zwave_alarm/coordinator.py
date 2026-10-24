@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypeVar
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -43,6 +43,8 @@ from .coordinator_state import (
 from .keypad_state import keypad_event_payload
 
 _LOGGER = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
@@ -98,23 +100,74 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
         return _remove
 
-    async def async_chime_keypad(self, node_id: int, sound: str, volume: int | None = None) -> None:
-        """Play a chime on one keypad via `POST /api/v1/keypads/{nodeId}/chime`, mapping client errors to HA errors."""
+    async def _call_client(self, call: Awaitable[T], what: str) -> T:
+        """Await a client call, mapping its errors to Home Assistant ones (`what` names the rejected action)."""
         try:
-            await api.async_chime_keypad(
-                self._session, self._host, self._port, None, node_id, sound,
-                volume=volume, secure=self._secure,
-            )
+            return await call
         except api.NotFound as err:
-            raise ServiceValidationError(f"Keypad {node_id} was not found on the Z-Wave Alarm service.") from err
+            raise ServiceValidationError(f"The Z-Wave Alarm service could not find the target: {err}") from err
         except api.BadRequest as err:
-            raise ServiceValidationError(f"The Z-Wave Alarm service rejected the chime: {err}") from err
+            raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
         except api.InvalidAuth as err:
             raise HomeAssistantError("The Z-Wave Alarm service refused the request.") from err
         except api.CannotConnect as err:
             raise HomeAssistantError("Could not reach the Z-Wave Alarm service.") from err
         except api.ZwaveAlarmError as err:
             raise HomeAssistantError(f"The Z-Wave Alarm service rejected the request: {err}") from err
+
+    async def async_chime_keypad(self, node_id: int, sound: str, volume: int | None = None) -> None:
+        """Play a chime on one keypad via `POST /api/v1/keypads/{nodeId}/chime`, mapping client errors to HA errors."""
+        await self._call_client(
+            api.async_chime_keypad(
+                self._session, self._host, self._port, None, node_id, sound, volume=volume, secure=self._secure
+            ),
+            "chime",
+        )
+
+    async def async_update_lock_config(self, node_id: int, **changes: Any) -> None:
+        """Write lock parameters via `PATCH /api/v1/locks/{nodeId}/config` and publish the returned lock at once."""
+        lock = await self._call_client(
+            api.async_update_lock_config(
+                self._session, self._host, self._port, None, node_id, changes, secure=self._secure
+            ),
+            "setting",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": lock}))
+
+    async def async_get_lock_schedules(self, node_id: int, user_id: int) -> dict[str, Any]:
+        return await self._call_client(
+            api.async_get_lock_schedules(
+                self._session, self._host, self._port, None, node_id, user_id, secure=self._secure
+            ),
+            "schedule request",
+        )
+
+    async def async_set_lock_schedule(
+        self, node_id: int, user_id: int, kind: str, slot: int, schedule: dict[str, Any]
+    ) -> None:
+        await self._call_client(
+            api.async_set_lock_schedule(
+                self._session, self._host, self._port, None, node_id, user_id, kind, slot, schedule, secure=self._secure
+            ),
+            "schedule",
+        )
+
+    async def async_clear_lock_schedule(self, node_id: int, user_id: int, kind: str, slot: int) -> None:
+        await self._call_client(
+            api.async_clear_lock_schedule(
+                self._session, self._host, self._port, None, node_id, user_id, kind, slot, secure=self._secure
+            ),
+            "schedule",
+        )
+
+    async def async_set_lock_schedules_enabled(self, node_id: int, enabled: bool, user_id: int | None = None) -> None:
+        await self._call_client(
+            api.async_set_lock_schedules_enabled(
+                self._session, self._host, self._port, None, node_id, enabled, user_id, secure=self._secure
+            ),
+            "schedule setting",
+        )
 
     def async_start(self, entry: ConfigEntry) -> None:
         """Start the persistent connect/read loop as a config-entry-scoped background task.
