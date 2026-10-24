@@ -1,6 +1,6 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
-# Until the client's keypad-settings release (0.6.0) is on PyPI, test against its branch; pin 0.6.0 once published.
-zwave-alarm-client @ git+https://github.com/judeibe/zwave-alarm-client.git@feat/keypad-settings
+# 0.7.0 (lock enrollment) is not tagged or on PyPI yet: until it is, install ../zwave-alarm-client (branch feat/lock-enrollment) editable.
+zwave-alarm-client==0.7.0
 home-assistant-frontend

@@ -34,8 +34,26 @@ _CODE_RE = re.compile(r"^\d{4,12}$")
 ROLE_SCHEMA = vol.In(["administrator", "member", "guest"])
 CATEGORY_SCHEMA = vol.In(["intrusion", "life-safety"])
 
+class LockNotEnrolled(api.NotFound):
+    """The lock is unknown to, or not enrolled in, the alarm system: nothing may be done to it from the panel."""
+
+
+class LockUnsupported(api.BadRequest):
+    """The lock's model or firmware lacks the capability the command needs (e.g. year-day schedules on a BE469ZP)."""
+
+
+class LockScheduleUnknown(api.BadRequest):
+    """The lock has not yet reported whether it has slots for this schedule kind (capability `null`)."""
+
+
 # Client exception -> websocket error code (most specific first; the panel maps codes to text).
 _ERROR_CODES: list[tuple[type[Exception], str]] = [
+    (LockNotEnrolled, "lock_not_enrolled"),
+    (LockUnsupported, "lock_unsupported"),
+    (LockScheduleUnknown, "lock_schedule_unknown"),
+    (api.LockNotSecure, "lock_not_secure"),  # a Conflict subclass: must precede it
+    (api.LockUnavailable, "lock_unavailable"),  # a CannotConnect subclass: must precede it
+    (api.ScheduleKindUnsupported, "schedule_kind_unsupported"),  # a BadRequest subclass: must precede it
     (api.ZoneNotEmpty, "zone_not_empty"),
     (api.ZoneInUse, "zone_in_use"),
     (api.CodeInUse, "code_in_use"),
@@ -173,6 +191,53 @@ def _keypads_summary(hass: HomeAssistant, entry: ConfigEntry) -> tuple[list[dict
     return getattr(data, "keypads", []), getattr(data, "keypad_settings", None)
 
 
+def _lock_view(lock: dict[str, Any]) -> dict[str, Any]:
+    """An enrolled lock as the panel sees it: the service's summary plus the resolved capability flags."""
+    return {**lock, "capabilities": api.lock_capabilities(lock)}
+
+
+def _lock_summaries(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
+    """Enrolled locks from the coordinator (the service sends no others); empty before the first snapshot."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is None or coordinator.data is None:
+        return []
+    return [_lock_view(lock) for lock in getattr(coordinator.data, "locks", [])]
+
+
+def _require_lock(hass: HomeAssistant, call: "_Call", node_id: int) -> dict[str, Any]:
+    """The enrolled lock `node_id`, or `LockNotEnrolled`."""
+    lock = next((k for k in _lock_summaries(hass, call.entry) if k["nodeId"] == node_id), None)
+    if lock is None:
+        raise LockNotEnrolled(f"Lock {node_id} is not enrolled in the alarm system.")
+    return lock
+
+
+def _require_secure(lock: dict[str, Any]) -> None:
+    """User codes and schedules need S0/S2; `secure` is `None` while unknown, which the service itself judges."""
+    if lock["capabilities"].get("secure") is False:
+        raise api.LockNotSecure(f"Lock {lock['nodeId']} was included without S0/S2: exclude it and include it again securely.")
+
+
+def _require_user_codes(hass: HomeAssistant, call: "_Call", node_id: int) -> dict[str, Any]:
+    lock = _require_lock(hass, call, node_id)
+    if not lock["capabilities"].get("userCodes"):
+        raise LockUnsupported(f"Lock {node_id} ({lock.get('model')}) does not support user codes.")
+    _require_secure(lock)
+    return lock
+
+
+def _require_schedule_kind(hass: HomeAssistant, call: "_Call", node_id: int, kind: str) -> dict[str, Any]:
+    """The lock, if `kind` schedules are supported (`True`); `False` is unsupported, `None` is not reported yet."""
+    lock = _require_lock(hass, call, node_id)
+    supported = api.lock_supports_schedule(lock, kind)
+    if supported is False:
+        raise LockUnsupported(f"Lock {node_id} ({lock.get('model')}) has no {kind} schedule slots.")
+    if supported is None:
+        raise LockScheduleUnknown(f"Lock {node_id} has not reported its {kind} schedule slots yet; refresh the lock and retry.")
+    _require_secure(lock)
+    return lock
+
+
 def _fault_summary(zones: list[dict[str, Any]]) -> dict[str, int]:
     """Counts of faulted sensors overall and by reason, for the dashboard's health card."""
     faults = faulted_sensors(zones)
@@ -203,6 +268,13 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         discoverable, discoverable_error = [], {"code": "service_unavailable", "message": str(err)}
     faults = _fault_summary(zones)
     keypads, keypad_settings = _keypads_summary(hass, call.entry)
+    # Paired-but-not-enrolled locks (admin-only `GET /locks/available`) are only ever offered for enrolment, never
+    # made devices; an older service without the endpoint simply has none to offer.
+    try:
+        available_locks, available_locks_error = await call(api.async_list_discoverable_locks), None
+    except api.ZwaveAlarmError as err:
+        available_locks = []
+        available_locks_error = None if isinstance(err, api.NotFound) else {"code": "service_unavailable", "message": str(err)}
     zones, discoverable = _with_ha_names(zones, discoverable, _zwave_device_names(hass))
     return {
         "panel": _panel_summary(hass, call.entry),
@@ -216,6 +288,9 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         "ha_users": await _ha_users(hass),
         "keypads": keypads,
         "keypad_settings": keypad_settings,
+        "locks": _lock_summaries(hass, call.entry),
+        "discoverable_locks": available_locks,
+        "discoverable_locks_error": available_locks_error,
     }
 
 
@@ -330,11 +405,132 @@ async def ws_keypad_settings_update(hass: HomeAssistant, call: _Call, msg: dict[
     return await call(api.async_update_keypad_settings, {"requireCodeToArm": msg["require_code_to_arm"]})
 
 
+# --- Locks ------------------------------------------------------------------
+
+SCHEDULE_KIND_SCHEMA = vol.In(["weekDay", "yearDay", "dailyRepeating"])
+_SCHEDULE_KINDS = ("weekDay", "yearDay", "dailyRepeating")
+USER_SLOT = vol.All(int, vol.Range(min=1, max=255))
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/enroll", vol.Required("node_id"): int})
+async def ws_lock_enroll(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Add a paired lock to the alarm system (idempotent); its device appears once the service pushes the lock."""
+    return await call(api.async_enroll_lock, msg["node_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/unenroll", vol.Required("node_id"): int})
+async def ws_lock_unenroll(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> dict[str, Any]:
+    """Remove a lock from the alarm system (it stays paired); its device is removed when the service pushes that."""
+    result = await call(api.async_unenroll_lock, msg["node_id"])
+    # The service clears the lock's codes and schedules first; when it could not (an unreachable lock) it still
+    # unenrols and reports `cleared: false` with the failures, which the panel shows.
+    return {"node_id": result["nodeId"], "cleared": result["cleared"], "failures": result["failures"]}
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/refresh", vol.Required("node_id"): int})
+async def ws_lock_refresh(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    _require_lock(hass, call, msg["node_id"])
+    return _lock_view(await call(api.async_refresh_lock, msg["node_id"]))
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/settings", vol.Required("node_id"): int,
+           vol.Required("settings"): dict})
+async def ws_lock_settings(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    lock = _require_lock(hass, call, msg["node_id"])
+    unsupported = sorted(set(msg["settings"]) - set(lock.get("supportedSettings", [])))
+    if unsupported:
+        raise LockUnsupported(f"Lock {msg['node_id']} does not support: {', '.join(unsupported)}")
+    return _lock_view(await call(api.async_update_lock_settings, msg["node_id"], msg["settings"]))
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/users", vol.Required("node_id"): int})
+async def ws_lock_users(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    _require_user_codes(hass, call, msg["node_id"])
+    return await call(api.async_list_lock_users, msg["node_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/user/set_code", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT, vol.Required("code"): CODE_SCHEMA,
+           vol.Optional("status"): vol.In(["enabled", "disabled"])})
+async def ws_lock_user_set_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    lock = _require_user_codes(hass, call, msg["node_id"])
+    if msg["user_id"] > lock["capabilities"]["userSlots"]:
+        raise LockUnsupported(f"Lock {msg['node_id']} has only {lock['capabilities']['userSlots']} user slots.")
+    return await call(
+        api.async_set_lock_user_code, msg["node_id"], msg["user_id"], msg["code"],
+        status=msg.get("status"), pin_length=(lock.get("settings") or {}).get("pinLength"),
+    )
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/user/clear_code", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT})
+async def ws_lock_user_clear_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    _require_user_codes(hass, call, msg["node_id"])
+    await call(api.async_clear_lock_user_code, msg["node_id"], msg["user_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/schedules", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT})
+async def ws_lock_schedules(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Every schedule slot of one user, for the kinds this lock supports.
+
+    Read one slot at a time: a battery lock answers slowly and drops bursts of Z-Wave traffic.
+    """
+    lock = _require_lock(hass, call, msg["node_id"])
+    flags = {kind: api.lock_supports_schedule(lock, kind) for kind in _SCHEDULE_KINDS}
+    if not any(flag is not False for flag in flags.values()):
+        raise LockUnsupported(f"Lock {msg['node_id']} ({lock.get('model')}) does not support schedules.")
+    _require_secure(lock)
+    kinds: dict[str, list[dict[str, Any]]] = {}
+    for kind, flag in flags.items():
+        if flag is not True:
+            continue
+        slots = []
+        for slot_id in range(1, int((lock.get("scheduleSlots") or {}).get(kind) or 0) + 1):
+            slot = await call(api.async_get_lock_schedule, msg["node_id"], msg["user_id"], kind, slot_id)
+            slots.append({"slot_id": slot_id, "schedule": slot["schedule"]})
+        kinds[kind] = slots
+    # Kinds the lock has not reported yet are named, so the panel can say "not reported yet" instead of hiding them.
+    return {"user_id": msg["user_id"], "kinds": kinds, "unknown": [k for k, flag in flags.items() if flag is None]}
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/schedule/set", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT, vol.Required("kind"): SCHEDULE_KIND_SCHEMA,
+           vol.Required("slot_id"): vol.All(int, vol.Range(min=1)), vol.Required("schedule"): dict})
+async def ws_lock_schedule_set(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    lock = _require_schedule_kind(hass, call, msg["node_id"], msg["kind"])
+    slots = int((lock.get("scheduleSlots") or {}).get(msg["kind"]) or 0)
+    if msg["slot_id"] > slots:
+        raise LockUnsupported(f"Lock {msg['node_id']} has only {slots} {msg['kind']} slots.")
+    await call(api.async_set_lock_schedule, msg["node_id"], msg["user_id"], msg["kind"], msg["slot_id"], msg["schedule"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/schedule/clear", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT, vol.Required("kind"): SCHEDULE_KIND_SCHEMA,
+           vol.Required("slot_id"): vol.All(int, vol.Range(min=1))})
+async def ws_lock_schedule_clear(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    _require_schedule_kind(hass, call, msg["node_id"], msg["kind"])
+    await call(api.async_clear_lock_schedule, msg["node_id"], msg["user_id"], msg["kind"], msg["slot_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/schedule/enabled", vol.Required("node_id"): int,
+           vol.Required("user_id"): USER_SLOT, vol.Required("enabled"): bool})
+async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    lock = _require_lock(hass, call, msg["node_id"])
+    if all(api.lock_supports_schedule(lock, kind) is False for kind in _SCHEDULE_KINDS):
+        raise LockUnsupported(f"Lock {msg['node_id']} ({lock.get('model')}) does not support schedules.")
+    _require_secure(lock)
+    await call(api.async_set_lock_schedules_enabled, msg["node_id"], msg["user_id"], msg["enabled"])
+
+
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
     ws_sensor_assign, ws_sensor_update, ws_sensor_unassign,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
+    ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,
+    ws_lock_user_set_code, ws_lock_user_clear_code,
+    ws_lock_schedules, ws_lock_schedule_set, ws_lock_schedule_clear, ws_lock_schedule_enabled,
 )
 
 

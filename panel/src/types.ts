@@ -61,6 +61,52 @@ export interface PanelSummary {
   armed_mode?: string | null;
   pending_delay_ends_at?: string | null;
 }
+export type ScheduleKind = "weekDay" | "yearDay" | "dailyRepeating";
+/** Per schedule kind: true supported, false the lock has no slots, null not reported yet. */
+export type ScheduleSupport = Record<ScheduleKind, boolean | null>;
+/** What an enrolled lock supports; the panel hides controls that are false and says "not reported yet" for null. */
+export interface LockCapabilities {
+  /** Included with S0/S2; null while unknown. User codes and schedules need it. */
+  secure: boolean | null;
+  userCodes: boolean;
+  userSlots: number;
+  schedules: ScheduleSupport;
+  alarmSettings: boolean;
+}
+/** A Schlage lock enrolled in the alarm system. The service sends enrolled locks only. */
+export interface Lock {
+  nodeId: number;
+  model?: string | null;
+  label?: string | null;
+  connectivityStatus?: "online" | "offline";
+  batteryLevel?: number | null;
+  settings?: { pinLength?: number | null } & Record<string, unknown>;
+  scheduleSlots?: Partial<Record<ScheduleKind, number>>;
+  capabilities: LockCapabilities;
+}
+/** A lock paired to the controller but not enrolled (`GET /locks/available`): offered for enrolment, never a device. */
+export interface AvailableLock {
+  nodeId: number;
+  model?: string | null;
+  label?: string | null;
+  connectivityStatus?: "online" | "offline";
+  /** False when it was included without S0/S2, which enrolment refuses. */
+  secure: boolean | null;
+}
+/** Reply to unenrolling: the service clears the lock's codes and schedules first; `cleared` is false when it could not. */
+export interface UnenrollReply {
+  node_id: number;
+  cleared: boolean | null;
+  failures: string[];
+}
+export type LockUserStatus = "enabled" | "disabled" | "available";
+export interface WeekDaySchedule { weekday: number; startHour: number; startMinute: number; stopHour: number; stopMinute: number }
+export interface YearDaySchedule {
+  startYear: number; startMonth: number; startDay: number; startHour: number; startMinute: number;
+  stopYear: number; stopMonth: number; stopDay: number; stopHour: number; stopMinute: number;
+}
+export interface DailyRepeatingSchedule { weekdays: number[]; startHour: number; startMinute: number; durationHour: number; durationMinute: number }
+export type LockSchedule = WeekDaySchedule | YearDaySchedule | DailyRepeatingSchedule;
 export interface Overview {
   /** Null until the integration has received its first snapshot from the alarm service. */
   panel: PanelSummary | null;
@@ -76,6 +122,11 @@ export interface Overview {
   keypads: Keypad[];
   /** Null until the first snapshot, or when the service predates keypad settings. */
   keypad_settings: KeypadSettings | null;
+  /** Enrolled locks only. */
+  locks: Lock[];
+  /** Paired to the Z-Wave controller but not enrolled: offered for enrolment, never shown as devices. */
+  discoverable_locks: AvailableLock[];
+  discoverable_locks_error?: { code: string; message: string } | null;
 }
 
 /** The slice of Home Assistant's `hass` object the panel uses. */

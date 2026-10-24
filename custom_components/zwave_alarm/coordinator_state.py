@@ -41,7 +41,8 @@ class StreamState:
     zones: list[dict[str, Any]]
     # KeypadSummary dicts (keypad contract v1.1); the snapshot's `keypads` is optional, so older services leave this empty.
     keypads: list[dict[str, Any]] = field(default_factory=list)
-    # LockSummary dicts (Schlage lock contract); the snapshot's `locks` is optional, so older services leave this empty.
+    # Enrolled locks only (LockSummary dicts, Schlage lock contract): paired-only locks are never sent here, only listed
+    # by the admin-only `GET /locks/available`. The snapshot's `locks` is optional, so older services leave this empty.
     locks: list[dict[str, Any]] = field(default_factory=list)
     # KeypadSettings dict (`requireCodeToArm`); the snapshot's `keypadSettings` is optional, so older services leave this unset.
     keypad_settings: dict[str, Any] | None = None
@@ -93,6 +94,10 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
         lock = event["lock"]
         locks = [lk for lk in state.locks if lk["nodeId"] != lock["nodeId"]]
         return replace(state, locks=sorted([*locks, lock], key=lambda lk: lk["nodeId"]))
+
+    if event_type == "lock.removed":
+        # Sent when a lock is unenrolled and when its node leaves the Z-Wave network.
+        return replace(state, locks=[lk for lk in state.locks if lk["nodeId"] != event["nodeId"]])
 
     if event_type == "keypad.changed":
         keypad = event["keypad"]

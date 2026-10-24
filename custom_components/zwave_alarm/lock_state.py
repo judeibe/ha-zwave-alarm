@@ -92,6 +92,12 @@ def lock_is_online(lock: dict[str, Any]) -> bool:
     return lock.get("connectivityStatus") == "online"
 
 
+def lock_is_locked(lock: dict[str, Any]) -> bool | None:
+    """True with the bolt thrown, False retracted, `None` until the lock reports it (or on a service without lock state)."""
+    locked = lock.get("locked")
+    return locked if isinstance(locked, bool) else None
+
+
 def lock_battery_level(lock: dict[str, Any]) -> int | None:
     level = lock.get("batteryLevel")
     return level if isinstance(level, int) else None

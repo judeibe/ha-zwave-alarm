@@ -37,7 +37,9 @@ The `zwave_alarm.keypad_chime` action plays a chime on the selected keypad devic
 
 ## Schlage locks (BE469 and BE468)
 
-Each Schlage lock the service discovers becomes its own device, kept live by `lock.changed` and the snapshot. The settings are configuration entities and the counters are diagnostics. A value the lock hasn't reported yet shows as `unknown`.
+A Schlage lock becomes a device only after an administrator has added it to the alarm system (the **Locks** tab of the panel lists paired locks under "Paired, not added"). The service sends enrolled locks only, so a lock that is merely paired never gets a device or entities. Removing a lock from the alarm (or the lock leaving the Z-Wave network) removes its device, and an enrolled lock's device can't be deleted by hand. Removing it first erases its user codes and schedules from the lock; if the lock doesn't answer it is still removed and the panel says the clear failed. Each enrolled lock is kept live by `lock.changed` and the snapshot.
+
+The **Locks** tab also manages each lock's user codes (write-only PINs) and Schedule Entry Lock schedules. It offers only what the lock reports it supports: a schedule type the lock has no slots for (for example year-day on some BE469ZP firmware) is hidden, one it hasn't reported yet says so, and a lock included without S0/S2 can't have codes or schedules managed. The settings are configuration entities and the counters are diagnostics. A value the lock hasn't reported yet shows as `unknown`.
 
 | Entity | Parameter | Notes |
 |---|---|---|
@@ -49,13 +51,14 @@ Each Schlage lock the service discovers becomes its own device, kept live by `lo
 | `sensor.<lock>_electronic_transitions`, `_mechanical_transitions`, `_electronic_failed_transitions`, `_electronic_high_preload_transitions` | 0x0C, 0x0D, 0x0E, 0x11 | Read-only lifetime counters. |
 | `sensor.<lock>_occupied_user_slots` | 0x06 | Number of occupied user code slots; attribute `slots` lists them (1-30). |
 | `sensor.<lock>_bootloader_version` | 0x12 | Read-only. |
+| `lock.<lock>` | | The bolt: locked, unlocked, or `unknown` until the lock reports it. Lock and unlock are sent to the service and the entity shows `locking` or `unlocking` until the lock reports the new state, which the entity never assumes from the reply. If the lock doesn't report it within 30 seconds (a jammed bolt) it falls back to the last reported state, and a command that fails clears it at once. A lock that doesn't answer raises a Home Assistant error. |
 | `sensor.<lock>_battery`, `binary_sensor.<lock>_connectivity` | | Diagnostics. |
 
 Entities are created from the lock's `supportedSettings`, so the BE469-only ones never appear on a BE468. Values are `unknown` until the lock reports them. Settings are written with `PATCH /locks/{id}/settings`; a lock that doesn't answer (`502 lock_unavailable`) raises a Home Assistant error and leaves the entity as it was.
 
 ### Lock schedule actions
 
-These use the lock's Schedule Entry Lock command class. Each user (1-30) has a limited number of slots per schedule type, which the lock reports; a slot beyond that is rejected before anything is sent.
+These use the lock's Schedule Entry Lock command class. Each user (1-30) has a limited number of slots per schedule type, which the lock reports; a slot beyond that is rejected before anything is sent, and so is a schedule type the lock has no slots for or hasn't reported yet.
 
 | Action | Purpose |
 |---|---|

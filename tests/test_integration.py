@@ -142,6 +142,14 @@ class FakeService:
             return web.json_response({"kind": key[3], "userId": key[2], "slotId": key[4], "schedule": self.schedule})
         return web.Response(status=204)
 
+    async def lock_state(self, request: web.Request) -> web.Response:
+        node_id, body = int(request.match_info["node_id"]), await request.json()
+        self.lock_calls.append(("state", node_id, body))
+        if (failure := self._lock_failure()) is not None:
+            return failure
+        # The bolt moves after the lock answers, so the reply still carries the old state; tests push `lock.changed`.
+        return web.json_response(next(lk for lk in self.locks if lk["nodeId"] == node_id))
+
     async def lock_schedules_enabled(self, request: web.Request) -> web.Response:
         info = request.match_info
         self.lock_calls.append(("enabled", int(info["node_id"]), int(info["user_id"]), await request.json()))
@@ -187,6 +195,7 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
+    app.router.add_put("/api/v1/locks/{node_id}/state", fake.lock_state)
     app.router.add_put("/api/v1/locks/{node_id}/users/{user_id}/schedules/enabled", fake.lock_schedules_enabled)
     app.router.add_route("*", "/api/v1/locks/{node_id}/users/{user_id}/schedules/{kind}/{slot_id}", fake.lock_schedule)
     app.router.add_get("/api/v1/stream", fake.stream)
@@ -950,3 +959,239 @@ async def test_no_keypad_pin_switch_when_the_service_has_no_keypad_settings(hass
     await setup()
     await _settle(hass, service)
     assert hass.states.get(SWITCH) is None
+
+
+# --- Lock lifecycle: a device exists only while the service reports (enrolls) the lock -----------------------------------
+
+
+async def test_paired_locks_never_create_devices_or_entities(hass: HomeAssistant, service: FakeService, setup) -> None:
+    """Paired-but-not-enrolled locks are only in `GET /locks/available`; the snapshot carries none, so none exist in HA."""
+    service.locks = []
+    entry = await setup()
+    await _settle(hass, service)
+
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert not [st for st in hass.states.async_all() if "_lock_" in st.entity_id or "door_lock" in st.entity_id]
+
+
+async def test_enrolling_adds_and_unenrolling_removes_the_lock_device(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.locks = []
+    entry = await setup()
+    await _settle(hass, service)
+
+    await _push(hass, service, {"type": "lock.changed", "lock": copy.deepcopy(BE469)})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is not None
+    assert hass.states.get("sensor.front_door_lock_battery").state == "80"
+
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert hass.states.get("sensor.front_door_lock_battery") is None
+
+    await _push(hass, service, {"type": "lock.changed", "lock": copy.deepcopy(BE469)})  # re-enrol
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is not None
+    assert hass.states.get("sensor.front_door_lock_battery").state == "80"
+
+
+async def test_only_the_unenrolled_lock_loses_its_device(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert _device(hass, entry, f"{entry.entry_id}_lock_{BE468['nodeId']}") is not None
+
+
+async def test_stale_lock_device_is_pruned_on_the_first_snapshot(hass: HomeAssistant, service: FakeService, setup) -> None:
+    """A lock unenrolled while HA was down must not linger as a device."""
+    service.locks = []
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_HOST: "127.0.0.1", CONF_PORT: service.port, CONF_SSL: False}, version=2,
+        unique_id=f"127.0.0.1:{service.port}",
+    )
+    entry.add_to_hass(hass)
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, f"{entry.entry_id}_lock_21")}, name="Old lock"
+    )
+    await hass.config_entries.async_setup(entry.entry_id)
+    await _settle(hass, service)
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_an_enrolled_lock_device_cannot_be_deleted_by_hand(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    from custom_components.zwave_alarm import async_remove_config_entry_device
+
+    entry = await setup()
+    await _settle(hass, service)
+    assert not await async_remove_config_entry_device(hass, entry, _device(hass, entry, f"{entry.entry_id}_lock_21"))
+    assert await async_remove_config_entry_device(hass, entry, _device(hass, entry, f"{entry.entry_id}_keypad_12"))
+
+
+# --- The lock entity ---------------------------------------------------------------------------------------------------
+
+
+async def test_lock_entity_follows_the_reported_bolt_state(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = True
+    entry = await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get("lock.front_door_lock").state == "locked"
+    assert hass.states.get("lock.back_door_lock").state == "unknown"  # the BE468 hasn't reported its bolt
+
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": False}})
+    assert hass.states.get("lock.front_door_lock").state == "unlocked"
+    del entry
+
+
+async def test_lock_and_unlock_send_the_command_but_wait_for_the_pushed_state(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert locks.lock_calls == [("state", 21, {"locked": True})]
+    assert hass.states.get("lock.front_door_lock").state == "locking"  # the reply still showed the old state: not applied
+
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": True}})
+    assert hass.states.get("lock.front_door_lock").state == "locked"
+
+    await hass.services.async_call("lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert locks.lock_calls[-1] == ("state", 21, {"locked": False})
+
+
+@pytest.mark.parametrize(("status", "expected", "message"), [
+    (502, HomeAssistantError, "did not respond"),
+    (404, ServiceValidationError, "could not find"),
+])
+async def test_lock_command_failures_become_clear_errors(hass, service, setup, locks, status, expected, message) -> None:
+    await setup()
+    await _settle(hass, service)
+    locks.lock_status = status
+    with pytest.raises(expected, match=message):
+        await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+
+
+async def test_lock_entity_goes_away_when_the_lock_is_removed(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    await setup()
+    await _settle(hass, service)
+    assert hass.states.get("lock.front_door_lock") is not None
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert hass.states.get("lock.front_door_lock") is None
+    assert hass.states.get("lock.back_door_lock") is not None
+
+
+async def test_schedule_services_refuse_kinds_the_lock_lacks_or_has_not_reported(hass, service, setup, locks) -> None:
+    locks.locks[0]["capabilities"] = {
+        "secure": True, "userCodes": True, "alarmSettings": True,
+        "schedules": {"weekDay": True, "yearDay": False, "dailyRepeating": None},
+    }
+    await setup()
+    await _settle(hass, service)
+    device_id = _lock_device_id(hass, hass.config_entries.async_entries(DOMAIN)[0])
+    base = {"device_id": device_id, "user_id": 1, "slot": 1}
+
+    with pytest.raises(ServiceValidationError, match="does not support yearday"):
+        await hass.services.async_call(DOMAIN, "clear_lock_schedule", {**base, "schedule_type": "yearday"}, blocking=True)
+    with pytest.raises(ServiceValidationError, match="has not reported its daily_repeating"):
+        await hass.services.async_call(DOMAIN, "clear_lock_schedule", {**base, "schedule_type": "daily_repeating"}, blocking=True)
+    assert locks.lock_calls == []
+
+
+# --- Pending states: locking / unlocking ------------------------------------------------------------------------------
+
+
+async def _entity_state(hass: HomeAssistant, entity_id: str = "lock.front_door_lock") -> str:
+    return hass.states.get(entity_id).state
+
+
+async def test_locking_shows_until_the_lock_reports_the_bolt_thrown(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"  # the reply still showed the old state: not taken as the new one
+
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": True}})
+    assert await _entity_state(hass) == "locked"
+
+
+async def test_unlocking_shows_until_the_lock_reports_the_bolt_retracted(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = True
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "unlocking"
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": False}})
+    assert await _entity_state(hass) == "unlocked"
+
+
+async def test_an_unrelated_update_keeps_the_pending_state(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": False, "batteryLevel": 50}})
+    assert await _entity_state(hass) == "locking"
+
+
+async def test_a_jammed_bolt_falls_back_to_the_last_reported_state_after_the_timeout(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.zwave_alarm.lock import LOCK_PENDING_TIMEOUT
+
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LOCK_PENDING_TIMEOUT - 1))
+    await hass.async_block_till_done()
+    assert await _entity_state(hass) == "locking"  # not yet
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LOCK_PENDING_TIMEOUT + 1))
+    await hass.async_block_till_done()
+    assert await _entity_state(hass) == "unlocked"
+
+
+@pytest.mark.parametrize(("status", "expected"), [(502, HomeAssistantError), (404, ServiceValidationError)])
+async def test_a_failed_command_clears_the_pending_state(hass, service, setup, locks, status, expected) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    locks.lock_status = status
+    with pytest.raises(expected):
+        await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "unlocked"
+
+
+async def test_removal_during_a_pending_state_cancels_the_timer(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"
+
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert hass.states.get("lock.front_door_lock") is None
+    await hass.async_block_till_done()  # a leftover timer would fail the test's lingering-timer check
+
+
+async def test_unloading_during_a_pending_state_cancels_the_timer(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    entry = await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_locking_an_already_locked_lock_does_not_stay_pending(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = True
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert locks.lock_calls == [("state", 21, {"locked": True})]
+    assert await _entity_state(hass) == "locked"

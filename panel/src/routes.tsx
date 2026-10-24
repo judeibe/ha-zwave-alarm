@@ -3,6 +3,7 @@ import type { Api } from "./api";
 import { LoadError, LoadingState, Shell } from "./Shell";
 import { OverviewPage } from "./pages/OverviewPage";
 import { KeypadsPage } from "./pages/KeypadsPage";
+import { LockSheet, LocksPage } from "./pages/LocksPage";
 import { PeoplePage, PersonSheet } from "./pages/PeoplePage";
 import { AddSensorSheet, SensorSheet, SensorsPage } from "./pages/SensorsPage";
 import { NewZoneSheet, ZoneSheet, ZonesPage } from "./pages/ZonesPage";
@@ -37,6 +38,7 @@ export function createRoutes(api: Api): RouteObject[] {
         },
         { path: "people", Component: PeoplePage, children: [{ path: ":personId", Component: PersonSheet }] },
         { path: "keypads", Component: KeypadsPage },
+        { path: "locks", Component: LocksPage, children: [{ path: ":nodeId", Component: LockSheet }] },
         { path: "*", element: <Navigate to="/overview" replace /> },
       ],
     },

@@ -12,6 +12,12 @@ export const ERROR_TEXT: Record<string, string> = {
   service_unavailable: "The Z-Wave Alarm service is up but its Z-Wave driver isn't ready yet.",
   invalid_auth: "The service rejected the stored token. Re-authenticate the integration.",
   forbidden: "The service denied this action.",
+  lock_not_enrolled: "That lock is not part of the alarm system. Add it first.",
+  lock_not_secure: "This lock was included without S0/S2 security, so its codes and schedules cannot be managed. Exclude it and include it again with S0 or S2.",
+  lock_schedule_unknown: "The lock has not reported its schedule slots yet. Wake it with a keypad touch, then try again.",
+  schedule_kind_unsupported: "This lock has no slots for that kind of schedule. Use a different kind.",
+  lock_unsupported: "This lock does not support that.",
+  lock_unavailable: "The lock did not answer. Wake it with a keypad touch and try again.",
   entry_not_found: "The Z-Wave Alarm integration is not loaded.",
   unknown_error: "Home Assistant hit an unexpected error handling this request. Check the Home Assistant log for the zwave_alarm integration.",
 };
