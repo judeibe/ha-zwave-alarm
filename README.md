@@ -27,6 +27,49 @@ Each keypad the service discovers (for example a Ring Keypad v2) becomes its own
 
 The `zwave_alarm.keypad_chime` action plays a chime on the selected keypad devices with a `sound` and an optional `volume` from 0 to 99.
 
+## Schlage locks (BE469 and BE468)
+
+Each Schlage lock the service discovers becomes its own device, kept live by `lock.changed` and the snapshot. The settings are configuration entities and the counters are diagnostics. A value the lock hasn't reported yet shows as `unknown`.
+
+| Entity | Parameter | Notes |
+|---|---|---|
+| `switch.<lock>_beeper`, `_vacation_mode`, `_lock_leave`, `_auto_lock` | 0x03, 0x04, 0x05, 0x0F | On both models. |
+| `number.<lock>_pin_length` | 0x10 | 4-8 digits. Changing it doesn't rewrite codes already on the lock; set them again at the new length. |
+| `select.<lock>_alarm_mode` | 0x07 | `off`, `alert`, `tamper`, `forced_entry`. **BE469 only.** |
+| `select.<lock>_alert_sensitivity`, `_tamper_sensitivity`, `_kick_sensitivity` | 0x08-0x0A | `most_sensitive` (1), `high` (2), `medium` (3), `low` (4), `least_sensitive` (5). 2 and 4 are undocumented intermediate values. `unknown` when the lock reports 0 (not supported). **BE469 only.** |
+| `switch.<lock>_local_controls` | 0x0B | On = local controls enabled. **BE469 only.** |
+| `sensor.<lock>_electronic_transitions`, `_mechanical_transitions`, `_electronic_failed_transitions`, `_electronic_high_preload_transitions` | 0x0C, 0x0D, 0x0E, 0x11 | Read-only lifetime counters. |
+| `sensor.<lock>_occupied_user_slots` | 0x06 | Number of occupied user code slots; attribute `slots` lists them (1-30). |
+| `sensor.<lock>_bootloader_version` | 0x12 | Read-only. |
+| `sensor.<lock>_battery`, `binary_sensor.<lock>_connectivity` | | Diagnostics. |
+
+The BE469-only entities are created only for locks that list the alarm settings, so a BE468 never shows them.
+
+### Lock schedule actions
+
+These use the lock's Schedule Entry Lock command class. Each user (1-30) has a limited number of slots per schedule type, which the lock reports; a slot beyond that is rejected before anything is sent.
+
+| Action | Purpose |
+|---|---|
+| `zwave_alarm.set_lock_schedule` | Writes one schedule: `weekday` (`weekday`, `start_time`, `end_time`), `yearday` (`start`, `end`) or `daily_repeating` (`weekdays`, `start_time`, `duration`). Start must be before the end, and a daily repeating duration must be under 24 hours. |
+| `zwave_alarm.clear_lock_schedule` | Clears one slot. |
+| `zwave_alarm.set_lock_schedules_enabled` | Turns schedule enforcement on or off for one user. |
+| `zwave_alarm.get_lock_schedules` | Returns the user's stored schedules (response data). |
+
+```yaml
+action: zwave_alarm.set_lock_schedule
+data:
+  device_id: 0f3c...   # a Schlage lock device
+  user_id: 3
+  slot: 1
+  schedule_type: daily_repeating
+  weekdays: [monday, tuesday, wednesday, thursday, friday]
+  start_time: "08:00:00"
+  duration: "09:30:00"
+```
+
+Locks need a Z-Wave Alarm service and `zwave-alarm-client` that include the lock API.
+
 All entities go `unavailable` while the service is unreachable (never `disarmed`). Setup asks only for the host and port; no token or other authentication is needed. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 
 This repo contains `custom_components/zwave_alarm`, the Home Assistant custom component built in Phase 03. It exposes this service's alarm panel and sensors as native Home Assistant entities (`alarm_control_panel.zwave_alarm`, `binary_sensor.zwave_alarm_zone_<zone>`, `sensor.zwave_alarm_fault_count`), kept live via a WebSocket connection to `/api/v1/stream`.
