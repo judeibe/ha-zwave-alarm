@@ -1,5 +1,6 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
-zwave-alarm-client==0.5.0
+# TODO: switch back to zwave-alarm-client==0.5.0 once the client release with the lock API is published.
+zwave-alarm-client @ git+https://github.com/judeibe/zwave-alarm-client@feat/schlage-full-feature-set
 home-assistant-frontend
