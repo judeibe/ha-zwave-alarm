@@ -61,7 +61,7 @@ def async_setup_lock_lifecycle(hass: HomeAssistant, entry: ConfigEntry, coordina
         for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
             lock_ids = {i for i in device.identifiers if _is_lock_identifier(entry.entry_id, i)}
             if lock_ids and not lock_ids & enrolled:
-                registry.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+                registry.async_remove_device(device.id)  # a device has a single config entry; removing it drops its entities
 
     _sync()
     entry.async_on_unload(coordinator.async_add_listener(_sync))

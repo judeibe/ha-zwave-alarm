@@ -146,6 +146,17 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": lock}))
 
+    async def async_set_locked(self, node_id: int, locked: bool) -> None:
+        """Throw or retract the bolt via `PUT /api/v1/locks/{nodeId}/state`.
+
+        The bolt moves after the lock answers, so the response may still show the old state and is deliberately not
+        applied: the real state arrives as `lock.changed` through the stream.
+        """
+        await self._call_client(
+            api.async_set_locked(self._session, self._host, self._port, None, node_id, locked, secure=self._secure),
+            "lock" if locked else "unlock",
+        )
+
     async def async_get_lock_schedule(self, node_id: int, user_id: int, kind: str, slot_id: int) -> dict[str, Any]:
         return await self._call_client(
             api.async_get_lock_schedule(

@@ -53,6 +53,7 @@ _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (LockScheduleUnknown, "lock_schedule_unknown"),
     (api.LockNotSecure, "lock_not_secure"),  # a Conflict subclass: must precede it
     (api.LockUnavailable, "lock_unavailable"),  # a CannotConnect subclass: must precede it
+    (api.ScheduleKindUnsupported, "schedule_kind_unsupported"),  # a BadRequest subclass: must precede it
     (api.ZoneNotEmpty, "zone_not_empty"),
     (api.ZoneInUse, "zone_in_use"),
     (api.CodeInUse, "code_in_use"),
@@ -422,10 +423,8 @@ async def ws_lock_unenroll(hass: HomeAssistant, call: _Call, msg: dict[str, Any]
     """Remove a lock from the alarm system (it stays paired); its device is removed when the service pushes that."""
     result = await call(api.async_unenroll_lock, msg["node_id"])
     # The service clears the lock's codes and schedules first; when it could not (an unreachable lock) it still
-    # unenrols and reports `cleared: false` with the failures, which the panel shows. An older client returns None.
-    if isinstance(result, dict):
-        return {"node_id": msg["node_id"], "cleared": result.get("cleared"), "failures": result.get("failures") or []}
-    return {"node_id": msg["node_id"], "cleared": None, "failures": []}
+    # unenrols and reports `cleared: false` with the failures, which the panel shows.
+    return {"node_id": result["nodeId"], "cleared": result["cleared"], "failures": result["failures"]}
 
 
 @_command({vol.Required("type"): "zwave_alarm/lock/refresh", vol.Required("node_id"): int})

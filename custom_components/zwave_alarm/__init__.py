@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 import voluptuous as vol
+import zwave_alarm_client as api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
@@ -42,7 +43,7 @@ from .panel import async_register_panel, async_remove_panel
 from .schlage import async_can_remove_lock_device, async_setup_lock_lifecycle, lock_device_identifier
 from .websocket_api import async_register_commands
 
-PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "number", "select", "sensor", "switch"]
+PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "lock", "number", "select", "sensor", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -146,13 +147,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return lock.get("label") or f"Lock {lock['nodeId']}"
 
     def _check_slot(lock: dict[str, Any], kind: str, slot: int) -> None:
-        slots = schedule_slot_count(lock, kind)
-        if not slots:  # None: not reported yet; 0: this kind isn't supported (e.g. daily repeating)
+        supported = api.lock_supports_schedule(lock, CLIENT_SCHEDULE_KINDS[kind])
+        if supported is not True:  # False: the lock has no slots for this kind; None: it hasn't reported them yet
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
-                translation_key="schedule_unsupported",
+                translation_key="schedule_unsupported" if supported is False else "schedule_not_reported",
                 translation_placeholders={"lock": _lock_name(lock), "kind": kind},
             )
+        slots = schedule_slot_count(lock, kind) or 0
         if slot > slots:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,

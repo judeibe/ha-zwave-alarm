@@ -380,7 +380,7 @@ async def test_overview_tolerates_a_service_without_lock_enrolment(hass, hass_ws
 
 async def test_lock_enroll_and_unenroll_call_the_service(hass, hass_ws_client, entry) -> None:
     enroll = AsyncMock(return_value=_lock())
-    unenroll = AsyncMock(return_value={"nodeId": 5, "cleared": True, "failures": []})
+    unenroll = AsyncMock(return_value={"nodeId": 5, "cleared": True, "failures": []})  # the client's UnenrollResult
     with patch(f"{API}.async_enroll_lock", enroll), patch(f"{API}.async_unenroll_lock", unenroll):
         client = await hass_ws_client(hass)
         assert (await _send(client, "lock/enroll", node_id=5))["success"]
@@ -397,10 +397,13 @@ async def test_lock_unenroll_reports_when_the_lock_could_not_be_cleared(hass, ha
     assert resp["success"] and resp["result"] == {"node_id": 5, "cleared": False, "failures": failures}
 
 
-async def test_lock_unenroll_tolerates_a_client_that_returns_nothing(hass, hass_ws_client, entry) -> None:
-    with patch(f"{API}.async_unenroll_lock", AsyncMock(return_value=None)):
-        resp = await _send(await hass_ws_client(hass), "lock/unenroll", node_id=5)
-    assert resp["result"] == {"node_id": 5, "cleared": None, "failures": []}
+async def test_schedule_kind_unsupported_has_its_own_error_code(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock())
+    setter = AsyncMock(side_effect=api.ScheduleKindUnsupported("no slots"))
+    week = {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 0}
+    with patch(f"{API}.async_set_lock_schedule", setter):
+        resp = await _send(await hass_ws_client(hass), "lock/schedule/set", node_id=5, user_id=1, kind="weekDay", slot_id=1, schedule=week)
+    assert resp["error"]["code"] == "schedule_kind_unsupported"
 
 
 async def test_lock_enroll_maps_a_lock_included_without_security(hass, hass_ws_client, entry) -> None:

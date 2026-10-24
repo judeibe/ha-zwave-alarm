@@ -51,13 +51,14 @@ The **Locks** tab also manages each lock's user codes (write-only PINs) and Sche
 | `sensor.<lock>_electronic_transitions`, `_mechanical_transitions`, `_electronic_failed_transitions`, `_electronic_high_preload_transitions` | 0x0C, 0x0D, 0x0E, 0x11 | Read-only lifetime counters. |
 | `sensor.<lock>_occupied_user_slots` | 0x06 | Number of occupied user code slots; attribute `slots` lists them (1-30). |
 | `sensor.<lock>_bootloader_version` | 0x12 | Read-only. |
+| `lock.<lock>` | | The bolt: locked, unlocked, or `unknown` until the lock reports it. Lock and unlock are sent to the service, and the state changes when the lock reports it (the entity doesn't assume it). A lock that doesn't answer raises a Home Assistant error. |
 | `sensor.<lock>_battery`, `binary_sensor.<lock>_connectivity` | | Diagnostics. |
 
 Entities are created from the lock's `supportedSettings`, so the BE469-only ones never appear on a BE468. Values are `unknown` until the lock reports them. Settings are written with `PATCH /locks/{id}/settings`; a lock that doesn't answer (`502 lock_unavailable`) raises a Home Assistant error and leaves the entity as it was.
 
 ### Lock schedule actions
 
-These use the lock's Schedule Entry Lock command class. Each user (1-30) has a limited number of slots per schedule type, which the lock reports; a slot beyond that is rejected before anything is sent.
+These use the lock's Schedule Entry Lock command class. Each user (1-30) has a limited number of slots per schedule type, which the lock reports; a slot beyond that is rejected before anything is sent, and so is a schedule type the lock has no slots for or hasn't reported yet.
 
 | Action | Purpose |
 |---|---|

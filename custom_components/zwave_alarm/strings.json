@@ -325,6 +325,9 @@
     "schedule_unsupported": {
       "message": "{lock} does not support {kind} schedules."
     },
+    "schedule_not_reported": {
+      "message": "{lock} has not reported its {kind} schedule slots yet. Wake it with a keypad touch and try again."
+    },
     "schedule_slot_out_of_range": {
       "message": "{lock} has {slots} slots for this schedule type; slot {slot} does not exist."
     },
