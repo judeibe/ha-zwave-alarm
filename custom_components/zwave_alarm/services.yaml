@@ -167,7 +167,7 @@ set_lock_schedules_enabled:
       example: true
       selector:
         boolean:
-get_lock_schedules:
+get_lock_schedule:
   fields:
     device_id:
       required: true
@@ -184,3 +184,21 @@ get_lock_schedules:
           min: 1
           max: 30
           mode: box
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    schedule_type:
+      required: true
+      example: weekday
+      selector:
+        select:
+          options:
+            - weekday
+            - yearday
+            - daily_repeating
+          translation_key: schedule_type

@@ -31,7 +31,7 @@ KEYPAD = {
     "chimeSounds": ["double_beep", "guitar", "wind_chimes", "bing_bong", "doorbell"],
     "connectivityStatus": "online", "batteryLevel": 87,
 }
-BE469 = {  # as the service reports it
+BE469 = {
     "nodeId": 21, "model": "BE469", "label": "Front Door Lock", "connectivityStatus": "online", "batteryLevel": 80,
     "supportedSettings": [
         "beeper", "vacationMode", "lockAndLeave", "autoLock", "pinLength",
@@ -49,13 +49,19 @@ BE469 = {  # as the service reports it
     "scheduleSlots": {"weekDay": 7, "yearDay": 7, "dailyRepeating": 7},
     "userSlotCount": 30,
 }
-BE468 = {  # as the client's typed models describe it
-    "nodeId": 22, "model": "BE468", "label": "Back Door Lock", "capabilities": ["schedules"],
-    "connectivityStatus": "online", "batteryLevel": 55, "locked": True,
-    "config": {"beeper": False, "vacationMode": True, "lockAndLeave": True, "autoLock": False, "pinLength": 6},
-    "diagnostics": {"electronicTransitionCount": 3, "mechanicalTransitionCount": 0, "electronicFailedCount": 0,
-                    "electronicHighPreloadTransitionCount": 0, "occupiedSlots": [], "bootloaderVersion": 2},
-    "scheduleSlots": {"weekday": 4, "yearDay": 4, "dailyRepeating": 0},
+BE468 = {
+    "nodeId": 22, "model": "BE468", "label": "Back Door Lock", "connectivityStatus": "online", "batteryLevel": 55,
+    "supportedSettings": ["beeper", "vacationMode", "lockAndLeave", "autoLock", "pinLength"],
+    "settings": {
+        "beeper": False, "vacationMode": True, "lockAndLeave": True, "autoLock": False, "pinLength": 6,
+        "alarmMode": None, "alertSensitivity": None, "tamperSensitivity": None, "kickSensitivity": None, "localControls": None,
+    },
+    "diagnostics": {
+        "electronicTransitionCount": 3, "mechanicalTransitionCount": 0, "electronicFailedCount": 0,
+        "electronicHighPreloadTransitionCount": 0, "bootloaderVersion": 2, "userSlotBitField": [0, 0, 0, 0], "occupiedUserSlots": [],
+    },
+    "scheduleSlots": {"weekDay": 4, "yearDay": 4, "dailyRepeating": 0},
+    "userSlotCount": 30,
 }
 PANEL = {"mode": "armed_away", "pendingDelayEndsAt": None, "disarmedZoneIds": []}
 
@@ -71,6 +77,9 @@ class FakeService:
         self.disarm_calls: list[dict] = []
         self.keypads: list[dict] | None = [copy.deepcopy(KEYPAD)]
         self.locks: list[dict] | None = None
+        self.lock_calls: list[tuple] = []
+        self.lock_status = 200  # non-2xx makes every lock write fail with the matching error body
+        self.schedule: dict | None = {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}
         self.chime_calls: list[dict] = []
         self.chime_status = 204
         self.auth_headers: list[str | None] = []
@@ -95,6 +104,36 @@ class FakeService:
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
+
+    def _lock_failure(self) -> web.Response | None:
+        if self.lock_status < 300:
+            return None
+        code = {400: "bad_request", 401: "unauthorized", 404: "not_found", 502: "lock_unavailable"}.get(self.lock_status, "internal")
+        return web.json_response({"error": {"code": code, "message": f"lock said {code}"}}, status=self.lock_status)
+
+    async def lock_settings(self, request: web.Request) -> web.Response:
+        node_id, body = int(request.match_info["node_id"]), await request.json()
+        self.lock_calls.append(("settings", node_id, body))
+        if (failure := self._lock_failure()) is not None:
+            return failure
+        lock = next(lk for lk in self.locks if lk["nodeId"] == node_id)
+        lock["settings"] = {**lock["settings"], **body}
+        return web.json_response(lock)
+
+    async def lock_schedule(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        key = (request.method.lower(), int(info["node_id"]), int(info["user_id"]), info["kind"], int(info["slot_id"]))
+        self.lock_calls.append((*key, *([await request.json()] if request.method == "PUT" else [])))
+        if (failure := self._lock_failure()) is not None:
+            return failure
+        if request.method == "GET":
+            return web.json_response({"kind": key[3], "userId": key[2], "slotId": key[4], "schedule": self.schedule})
+        return web.Response(status=204)
+
+    async def lock_schedules_enabled(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        self.lock_calls.append(("enabled", int(info["node_id"]), int(info["user_id"]), await request.json()))
+        return self._lock_failure() or web.Response(status=204)
 
     async def stream(self, request: web.Request) -> web.StreamResponse:
         self._note(request)
@@ -132,6 +171,9 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
+    app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
+    app.router.add_put("/api/v1/locks/{node_id}/users/{user_id}/schedules/enabled", fake.lock_schedules_enabled)
+    app.router.add_route("*", "/api/v1/locks/{node_id}/users/{user_id}/schedules/{kind}/{slot_id}", fake.lock_schedule)
     app.router.add_get("/api/v1/stream", fake.stream)
     server = TestServer(app, host="127.0.0.1")
     await server.start_server()
@@ -502,61 +544,18 @@ async def test_chime_service_maps_unreachable_service(hass: HomeAssistant, servi
 # --- Schlage locks -----------------------------------------------------------------------------------------------------
 
 
-class LockClient:
-    """Stands in for the client's lock calls (shipped in zwave-alarm-client 0.5.0), recording what the integration sends."""
-
-    def __init__(self, service: FakeService) -> None:
-        self.service = service
-        self.calls: list[tuple] = []
-        self.error: Exception | None = None
-        self.schedules: dict = {"enabled": True, "weekDay": [], "yearDay": [], "dailyRepeating": []}
-
-    def _record(self, name: str, *args, **kwargs) -> None:
-        self.calls.append((name, *args, *([kwargs] if kwargs else [])))
-        if self.error is not None:
-            raise self.error
-
-    async def update_config(self, session, host, port, token, node_id, update, *, secure=False):
-        self._record("update_config", node_id, dict(update))
-        lock = next(lk for lk in self.service.locks if lk["nodeId"] == node_id)
-        key = "settings" if "settings" in lock else "config"
-        lock[key] = {**lock[key], **update}
-        return copy.deepcopy(lock)
-
-    async def get_schedules(self, session, host, port, token, node_id, user_id, *, secure=False):
-        self._record("get_schedules", node_id, user_id)
-        return self.schedules
-
-    async def set_schedule(self, session, host, port, token, node_id, user_id, kind, slot, schedule, *, secure=False):
-        self._record("set_schedule", node_id, user_id, kind, slot, dict(schedule))
-
-    async def clear_schedule(self, session, host, port, token, node_id, user_id, kind, slot, *, secure=False):
-        self._record("clear_schedule", node_id, user_id, kind, slot)
-
-    async def set_enabled(self, session, host, port, token, node_id, user_id, enabled, *, secure=False):
-        self._record("set_enabled", node_id, user_id, enabled)
-
-
 @pytest.fixture
-def lock_client(service: FakeService, monkeypatch) -> LockClient:
+def locks(service: FakeService) -> FakeService:
+    """The fake service reporting a BE469 and a BE468; lock writes reach it through the real client."""
     service.locks = [copy.deepcopy(BE469), copy.deepcopy(BE468)]
-    client = LockClient(service)
-    for name, method in (
-        ("async_update_lock_config", client.update_config),
-        ("async_get_lock_schedules", client.get_schedules),
-        ("async_set_lock_schedule", client.set_schedule),
-        ("async_clear_lock_schedule", client.clear_schedule),
-        ("async_set_lock_schedules_enabled", client.set_enabled),
-    ):
-        monkeypatch.setattr(api, name, method, raising=False)  # absent from the client until its next release
-    return client
+    return service
 
 
 def _lock_device_id(hass: HomeAssistant, entry: MockConfigEntry, node_id: int = 21) -> str:
     return _device(hass, entry, f"{entry.entry_id}_lock_{node_id}").id
 
 
-async def test_be469_gets_every_lock_entity(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_be469_gets_every_lock_entity(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
 
@@ -588,18 +587,33 @@ async def test_be469_gets_every_lock_entity(hass: HomeAssistant, service: FakeSe
     assert hass.states.get("sensor.front_door_lock_occupied_user_slots").attributes["slots"] == [1, 2, 9]
 
 
-async def test_be468_has_no_alarm_entities(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_entities_are_built_from_supported_settings(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
     assert hass.states.get("switch.back_door_lock_vacation_mode").state == "on"
     assert hass.states.get("number.back_door_lock_pin_length").state == "6"
-    for entity_id in (
+    for entity_id in (  # a BE468 lists none of the BE469-only settings, even though it reports them as null
         "switch.back_door_lock_local_controls", "select.back_door_lock_alarm_mode",
         "select.back_door_lock_alert_sensitivity", "select.back_door_lock_tamper_sensitivity",
         "select.back_door_lock_kick_sensitivity",
     ):
         assert hass.states.get(entity_id) is None, entity_id
+
+
+async def test_unreported_values_are_unknown(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["settings"]["beeper"] = None
+    locks.locks[0]["settings"]["pinLength"] = None
+    locks.locks[0]["diagnostics"].update(electronicFailedCount=None, occupiedUserSlots=None, bootloaderVersion=None)
+    locks.locks[0]["batteryLevel"] = None
+    await setup()
+    await _settle(hass, service)
+
+    for entity_id in (
+        "switch.front_door_lock_beeper", "number.front_door_lock_pin_length", "sensor.front_door_lock_electronic_failed_transitions",
+        "sensor.front_door_lock_occupied_user_slots", "sensor.front_door_lock_bootloader_version", "sensor.front_door_lock_battery",
+    ):
+        assert hass.states.get(entity_id).state == "unknown", entity_id
 
 
 async def test_snapshot_without_locks_creates_none(hass: HomeAssistant, service: FakeService, setup) -> None:
@@ -609,7 +623,7 @@ async def test_snapshot_without_locks_creates_none(hass: HomeAssistant, service:
     assert hass.states.get("switch.front_door_lock_beeper") is None
 
 
-async def test_switch_writes_the_parameter_and_updates_at_once(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_switch_writes_the_setting_and_updates_at_once(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
@@ -617,39 +631,36 @@ async def test_switch_writes_the_parameter_and_updates_at_once(hass: HomeAssista
     await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.front_door_lock_local_controls"}, blocking=True)
     await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.back_door_lock_beeper"}, blocking=True)
 
-    assert lock_client.calls == [
-        ("update_config", 21, {"beeper": False}),
-        ("update_config", 21, {"localControls": True}),
-        ("update_config", 22, {"beeper": True}),
+    assert locks.lock_calls == [
+        ("settings", 21, {"beeper": False}),
+        ("settings", 21, {"localControls": True}),
+        ("settings", 22, {"beeper": True}),
     ]
     assert hass.states.get("switch.front_door_lock_beeper").state == "off"
     assert hass.states.get("switch.back_door_lock_beeper").state == "on"
 
 
-async def test_selects_write_option_values(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_selects_write_option_values(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
-    await hass.services.async_call(
-        "select", "select_option", {"entity_id": "select.front_door_lock_alarm_mode", "option": "forced_entry"}, blocking=True
-    )
-    await hass.services.async_call(
-        "select", "select_option", {"entity_id": "select.front_door_lock_kick_sensitivity", "option": "least_sensitive"}, blocking=True
-    )
-    await hass.services.async_call(
-        "select", "select_option", {"entity_id": "select.front_door_lock_alert_sensitivity", "option": "low"}, blocking=True
-    )
+    for entity, option in (
+        ("alarm_mode", "forced_entry"), ("kick_sensitivity", "least_sensitive"), ("alert_sensitivity", "low"),
+    ):
+        await hass.services.async_call(
+            "select", "select_option", {"entity_id": f"select.front_door_lock_{entity}", "option": option}, blocking=True
+        )
 
-    assert lock_client.calls == [
-        ("update_config", 21, {"alarmMode": "forced_entry"}),
-        ("update_config", 21, {"kickSensitivity": 5}),
-        ("update_config", 21, {"alertSensitivity": 4}),
+    assert locks.lock_calls == [
+        ("settings", 21, {"alarmMode": "forced_entry"}),
+        ("settings", 21, {"kickSensitivity": 5}),
+        ("settings", 21, {"alertSensitivity": 4}),
     ]
     assert hass.states.get("select.front_door_lock_alarm_mode").state == "forced_entry"
     assert hass.states.get("select.front_door_lock_kick_sensitivity").state == "least_sensitive"
 
 
-async def test_pin_length_is_limited_to_4_through_8(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_pin_length_is_limited_to_4_through_8(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
@@ -660,45 +671,60 @@ async def test_pin_length_is_limited_to_4_through_8(hass: HomeAssistant, service
                 "number", "set_value", {"entity_id": "number.front_door_lock_pin_length", "value": bad}, blocking=True
             )
 
-    assert lock_client.calls == [("update_config", 21, {"pinLength": 8})]
+    assert locks.lock_calls == [("settings", 21, {"pinLength": 8})]
     assert hass.states.get("number.front_door_lock_pin_length").state == "8"
 
 
-@pytest.mark.parametrize(("error", "expected"), [
-    (api.BadRequest("pinLength out of range"), ServiceValidationError),
-    (api.NotFound("no such lock"), ServiceValidationError),
-    (api.InvalidAuth(), HomeAssistantError),
-    (api.CannotConnect(), HomeAssistantError),
+@pytest.mark.parametrize(("status", "expected", "message"), [
+    (400, ServiceValidationError, "lock said bad_request"),
+    (404, ServiceValidationError, "lock said not_found"),
+    (401, HomeAssistantError, "refused"),
+    (502, HomeAssistantError, "did not respond"),  # LockUnavailable, not "service unreachable"
+    (500, HomeAssistantError, "Could not reach"),  # the client treats a 5xx as an unreachable service
 ])
-async def test_lock_write_errors_map_to_home_assistant_errors(hass, service, setup, lock_client, error, expected) -> None:
+async def test_lock_write_errors_map_to_home_assistant_errors(hass, service, setup, locks, status, expected, message) -> None:
     await setup()
     await _settle(hass, service)
-    lock_client.error = error
+    locks.lock_status = status
 
-    with pytest.raises(expected) as caught:
+    with pytest.raises(expected, match=message) as caught:
         await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.front_door_lock_beeper"}, blocking=True)
     assert type(caught.value) is expected
     assert hass.states.get("switch.front_door_lock_beeper").state == "on"  # a failed write leaves the state untouched
 
 
-async def test_lock_changed_updates_entities_and_discovers_new_locks(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_unreachable_service_is_reported_as_such(hass, service, setup, locks, monkeypatch) -> None:
+    async def unreachable(*args, **kwargs):
+        raise api.CannotConnect
+
+    monkeypatch.setattr(api, "async_update_lock_settings", unreachable)
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError, match="Could not reach"):
+        await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.front_door_lock_beeper"}, blocking=True)
+
+
+async def test_lock_changed_updates_entities_and_discovers_new_locks(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
     changed = {**BE469, "batteryLevel": 9, "connectivityStatus": "offline",
-               "settings": {**BE469["settings"], "vacationMode": True}, "diagnostics": {**BE469["diagnostics"], "occupiedUserSlots": [4]}}
+               "settings": {**BE469["settings"], "vacationMode": True},
+               "diagnostics": {**BE469["diagnostics"], "occupiedUserSlots": [4], "electronicFailedCount": 5}}
     await _push(hass, service, {"type": "lock.changed", "lock": changed})
     assert hass.states.get("sensor.front_door_lock_battery").state == "9"
     assert hass.states.get("binary_sensor.front_door_lock_connectivity").state == "off"
     assert hass.states.get("switch.front_door_lock_vacation_mode").state == "on"
     assert hass.states.get("sensor.front_door_lock_occupied_user_slots").state == "1"
+    assert hass.states.get("sensor.front_door_lock_electronic_failed_transitions").state == "5"
 
     await _push(hass, service, {"type": "lock.changed", "lock": {**BE468, "nodeId": 30, "label": "Garage Lock"}})
     assert hass.states.get("switch.garage_lock_beeper").state == "off"
     assert hass.states.get("select.garage_lock_alarm_mode") is None
 
 
-async def test_lock_entities_unavailable_while_disconnected(hass: HomeAssistant, service: FakeService, setup, lock_client) -> None:
+async def test_lock_entities_unavailable_while_disconnected(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
     await setup()
     await _settle(hass, service)
 
@@ -713,7 +739,7 @@ async def test_lock_entities_unavailable_while_disconnected(hass: HomeAssistant,
         assert hass.states.get(entity_id).state == "unavailable"
 
 
-async def test_set_lock_schedule_sends_validated_fields_to_each_lock(hass, service, setup, lock_client) -> None:
+async def test_set_lock_schedule_sends_the_services_encoding(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
 
@@ -727,41 +753,40 @@ async def test_set_lock_schedule_sends_validated_fields_to_each_lock(hass, servi
     }, blocking=True)
     await hass.services.async_call(DOMAIN, "set_lock_schedule", {
         "device_id": _lock_device_id(hass, entry), "user_id": 4, "slot": 1, "schedule_type": "daily_repeating",
-        "weekdays": ["monday", "friday"], "start_time": "08:00:00", "duration": "09:30:00",
+        "weekdays": ["sunday", "friday"], "start_time": "08:00:00", "duration": {"hours": 9, "minutes": 30},
     }, blocking=True)
 
-    assert lock_client.calls == [
-        ("set_schedule", 21, 3, "weekday", 2, {"weekday": "monday", "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}),
-        ("set_schedule", 21, 3, "yearDay", 1, {
-            "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
-            "stopYear": 2026, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
+    assert locks.lock_calls == [
+        ("put", 21, 3, "weekDay", 2, {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}),
+        ("put", 21, 3, "yearDay", 1, {
+            "startYear": 26, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
+            "stopYear": 26, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
         }),
-        ("set_schedule", 21, 4, "dailyRepeating", 1, {
-            "weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30,
+        ("put", 21, 4, "dailyRepeating", 1, {
+            "weekdays": [0, 5], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30,
         }),
     ]
 
 
-@pytest.mark.parametrize(("extra", "message"), [
-    ({"end_time": "07:00:00"}, "Invalid schedule"),  # stop before start
-    ({"slot": 8}, "slot 8 does not exist"),  # the lock has 7 weekday slots
-    ({"schedule_type": "daily_repeating", "weekdays": ["monday"], "duration": "01:00:00"}, "does not support"),  # BE468 has none
+@pytest.mark.parametrize(("node_id", "extra", "message"), [
+    (21, {"end_time": "07:00:00"}, "Invalid schedule"),  # stop before start
+    (21, {"slot": 8}, "slot 8 does not exist"),  # the BE469 has 7 weekday slots
+    (22, {"schedule_type": "daily_repeating", "weekdays": ["monday"], "duration": "01:00:00"}, "does not support"),  # the BE468 has none
 ])
-async def test_set_lock_schedule_rejects_bad_requests(hass, service, setup, lock_client, extra, message) -> None:
+async def test_set_lock_schedule_rejects_bad_requests(hass, service, setup, locks, node_id, extra, message) -> None:
     entry = await setup()
     await _settle(hass, service)
     data = {
-        "device_id": _lock_device_id(hass, entry, 22), "user_id": 3, "slot": 2, "schedule_type": "weekday",
+        "device_id": _lock_device_id(hass, entry, node_id), "user_id": 3, "slot": 2, "schedule_type": "weekday",
         "weekday": "monday", "start_time": "08:00:00", "end_time": "17:30:00",
     }
-    data["device_id"] = _lock_device_id(hass, entry, 22 if "weekdays" in extra else 21)
 
     with pytest.raises(ServiceValidationError, match=message):
         await hass.services.async_call(DOMAIN, "set_lock_schedule", {**data, **extra}, blocking=True)
-    assert lock_client.calls == []
+    assert locks.lock_calls == []
 
 
-async def test_set_lock_schedule_validates_every_target_before_writing(hass, service, setup, lock_client) -> None:
+async def test_set_lock_schedule_validates_every_target_before_writing(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
 
@@ -770,10 +795,10 @@ async def test_set_lock_schedule_validates_every_target_before_writing(hass, ser
             "device_id": [_lock_device_id(hass, entry, 21), _lock_device_id(hass, entry, 22)], "user_id": 1, "slot": 6,
             "schedule_type": "weekday", "weekday": "monday", "start_time": "08:00:00", "end_time": "09:00:00",
         }, blocking=True)
-    assert lock_client.calls == []
+    assert locks.lock_calls == []
 
 
-async def test_schedule_services_need_a_lock_target(hass, service, setup, lock_client) -> None:
+async def test_schedule_services_need_a_lock_target(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
 
@@ -781,24 +806,36 @@ async def test_schedule_services_need_a_lock_target(hass, service, setup, lock_c
         await hass.services.async_call(
             DOMAIN, "set_lock_schedules_enabled", {"device_id": _device(hass, entry, entry.entry_id).id, "user_id": 1, "enabled": True}, blocking=True
         )
-    assert lock_client.calls == []
+    assert locks.lock_calls == []
 
 
 @pytest.mark.parametrize("data", [
     {"user_id": 0}, {"user_id": 31}, {"slot": 0}, {"schedule_type": "hourly"}, {"weekday": "someday"}, {"start_time": "25:00:00"},
 ])
-async def test_set_lock_schedule_rejects_bad_data(hass, service, setup, lock_client, data) -> None:
+async def test_set_lock_schedule_rejects_bad_data(hass, service, setup, locks, data) -> None:
     entry = await setup()
     await _settle(hass, service)
     base = {"device_id": _lock_device_id(hass, entry), "user_id": 1, "slot": 1, "schedule_type": "weekday",
             "weekday": "monday", "start_time": "08:00:00", "end_time": "09:00:00"}
 
-    with pytest.raises(vol.Invalid):
+    with pytest.raises((vol.Invalid, ServiceValidationError)):
         await hass.services.async_call(DOMAIN, "set_lock_schedule", {**base, **data}, blocking=True)
-    assert lock_client.calls == []
+    assert locks.lock_calls == []
 
 
-async def test_clear_lock_schedule_and_enable_disable(hass, service, setup, lock_client) -> None:
+async def test_year_day_schedule_outside_2000_2099_is_rejected(hass, service, setup, locks) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match="2000 and 2099"):
+        await hass.services.async_call(DOMAIN, "set_lock_schedule", {
+            "device_id": _lock_device_id(hass, entry), "user_id": 1, "slot": 1, "schedule_type": "yearday",
+            "start": "2100-01-01 00:00:00", "end": "2100-01-02 00:00:00",
+        }, blocking=True)
+    assert locks.lock_calls == []
+
+
+async def test_clear_lock_schedule_and_enable_disable(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
     device_id = _lock_device_id(hass, entry)
@@ -809,34 +846,34 @@ async def test_clear_lock_schedule_and_enable_disable(hass, service, setup, lock
     await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": False, "user_id": 3}, blocking=True)
     await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": True, "user_id": 4}, blocking=True)
 
-    assert lock_client.calls == [
-        ("clear_schedule", 21, 3, "yearDay", 2),
-        ("set_enabled", 21, 3, False),
-        ("set_enabled", 21, 4, True),
+    assert locks.lock_calls == [
+        ("delete", 21, 3, "yearDay", 2),
+        ("enabled", 21, 3, {"enabled": False}),
+        ("enabled", 21, 4, {"enabled": True}),
     ]
 
 
-async def test_get_lock_schedules_returns_the_locks_data(hass, service, setup, lock_client) -> None:
+async def test_get_lock_schedule_returns_the_slot(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
-    lock_client.schedules = {"enabled": True, "weekDay": [{"slot": 1, "weekday": "monday"}], "yearDay": [], "dailyRepeating": []}
 
     response = await hass.services.async_call(
-        DOMAIN, "get_lock_schedules", {"device_id": _lock_device_id(hass, entry), "user_id": 3}, blocking=True, return_response=True
+        DOMAIN, "get_lock_schedule", {"device_id": _lock_device_id(hass, entry), "user_id": 3, "slot": 1, "schedule_type": "weekday"},
+        blocking=True, return_response=True,
     )
 
-    assert response == {"Front Door Lock": lock_client.schedules}
-    assert lock_client.calls == [("get_schedules", 21, 3)]
+    assert response == {"Front Door Lock": {"kind": "weekDay", "userId": 3, "slotId": 1, "schedule": locks.schedule}}
+    assert locks.lock_calls == [("get", 21, 3, "weekDay", 1)]
 
 
-async def test_schedule_service_maps_client_errors(hass, service, setup, lock_client) -> None:
+async def test_schedule_service_maps_lock_errors(hass, service, setup, locks) -> None:
     entry = await setup()
     await _settle(hass, service)
     data = {"device_id": _lock_device_id(hass, entry), "user_id": 3, "slot": 1, "schedule_type": "weekday"}
 
-    lock_client.error = api.BadRequest("slot is occupied")
-    with pytest.raises(ServiceValidationError, match="slot is occupied"):
+    locks.lock_status = 400
+    with pytest.raises(ServiceValidationError, match="bad_request"):
         await hass.services.async_call(DOMAIN, "clear_lock_schedule", data, blocking=True)
-    lock_client.error = api.CannotConnect()
-    with pytest.raises(HomeAssistantError, match="Could not reach"):
+    locks.lock_status = 502
+    with pytest.raises(HomeAssistantError, match="did not respond"):
         await hass.services.async_call(DOMAIN, "clear_lock_schedule", data, blocking=True)

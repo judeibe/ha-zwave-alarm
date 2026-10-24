@@ -43,7 +43,7 @@ Each Schlage lock the service discovers becomes its own device, kept live by `lo
 | `sensor.<lock>_bootloader_version` | 0x12 | Read-only. |
 | `sensor.<lock>_battery`, `binary_sensor.<lock>_connectivity` | | Diagnostics. |
 
-The BE469-only entities are created only for locks that list the alarm settings, so a BE468 never shows them.
+Entities are created from the lock's `supportedSettings`, so the BE469-only ones never appear on a BE468. Values are `unknown` until the lock reports them. Settings are written with `PATCH /locks/{id}/settings`; a lock that doesn't answer (`502 lock_unavailable`) raises a Home Assistant error and leaves the entity as it was.
 
 ### Lock schedule actions
 
@@ -51,10 +51,10 @@ These use the lock's Schedule Entry Lock command class. Each user (1-30) has a l
 
 | Action | Purpose |
 |---|---|
-| `zwave_alarm.set_lock_schedule` | Writes one schedule: `weekday` (`weekday`, `start_time`, `end_time`), `yearday` (`start`, `end`) or `daily_repeating` (`weekdays`, `start_time`, `duration`). Start must be before the end, and a daily repeating duration must be under 24 hours. |
+| `zwave_alarm.set_lock_schedule` | Writes one schedule (weekdays are names and dates are full dates in the action; the integration sends the service's numeric weekdays and two-digit years, so only 2000-2099 work): `weekday` (`weekday`, `start_time`, `end_time`), `yearday` (`start`, `end`) or `daily_repeating` (`weekdays`, `start_time`, `duration`). Start must be before the end, and a daily repeating duration must be under 24 hours. |
 | `zwave_alarm.clear_lock_schedule` | Clears one slot. |
 | `zwave_alarm.set_lock_schedules_enabled` | Turns schedule enforcement on or off for one user. |
-| `zwave_alarm.get_lock_schedules` | Returns the user's stored schedules (response data). |
+| `zwave_alarm.get_lock_schedule` | Returns one stored schedule slot (response data); `schedule` is empty for an unused slot. |
 
 ```yaml
 action: zwave_alarm.set_lock_schedule
@@ -68,7 +68,7 @@ data:
   duration: "09:30:00"
 ```
 
-Locks need a Z-Wave Alarm service and `zwave-alarm-client` that include the lock API.
+Locks need a Z-Wave Alarm service and `zwave-alarm-client` (0.5.0 or later) that include the lock API.
 
 All entities go `unavailable` while the service is unreachable (never `disarmed`). Setup asks only for the host and port; no token or other authentication is needed. The config flow has a "Use HTTPS/WSS" option for deployments behind TLS.
 

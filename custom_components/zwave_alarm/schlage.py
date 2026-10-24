@@ -1,9 +1,9 @@
 """Shared plumbing for the per-lock entities (Schlage BE469 / BE468).
 
 Each lock the service reports becomes its own Home Assistant device, with its
-configuration switches/selects/number and diagnostic sensors hung off it. The
-BE469-only parameters (alarm mode, sensitivities, local controls) are only
-created for locks that advertise the `alarm_config` capability.
+configuration switches/selects/number and diagnostic sensors hung off it. Entities
+are created from the lock's `supportedSettings`, so the BE469-only parameters (alarm
+mode, sensitivities, local controls) never appear on a BE468.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
-from .lock_state import lock_config
+from .lock_state import lock_settings
 from .nodes import async_add_node_entities
 
 
@@ -64,24 +64,24 @@ class ZwaveAlarmLockEntity(CoordinatorEntity[ZwaveAlarmCoordinator]):
             return None
         return next((lk for lk in self.coordinator.data.locks if lk["nodeId"] == self._node_id), None)
 
-    def _config_value(self, key: str) -> Any:
+    def _setting_value(self, key: str) -> Any:
         lock = self._lock()
-        return lock_config(lock).get(key) if lock is not None else None
+        return lock_settings(lock).get(key) if lock is not None else None
 
     @property
     def available(self) -> bool:
         return super().available and self._lock() is not None
 
 
-class ZwaveAlarmLockConfigEntity(ZwaveAlarmLockEntity):
-    """A writable lock parameter, stored under `config[config_key]` and written back with `PATCH .../config`."""
+class ZwaveAlarmLockSettingEntity(ZwaveAlarmLockEntity):
+    """A writable lock parameter, read from `settings[setting_key]` and written back with `PATCH .../settings`."""
 
     def __init__(
-        self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], config_key: str, translation_key: str
+        self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], setting_key: str, translation_key: str
     ) -> None:
         super().__init__(coordinator, entry, lock, translation_key)
-        self._config_key = config_key
+        self._setting_key = setting_key
         self._attr_translation_key = translation_key
 
     async def _async_write(self, value: Any) -> None:
-        await self.coordinator.async_update_lock_config(self._node_id, **{self._config_key: value})
+        await self.coordinator.async_update_lock_settings(self._node_id, **{self._setting_key: value})

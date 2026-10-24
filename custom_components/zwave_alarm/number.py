@@ -12,18 +12,21 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
-from .lock_state import PIN_LENGTH_MAX, PIN_LENGTH_MIN
-from .schlage import ZwaveAlarmLockConfigEntity, async_add_lock_entities
+from .lock_state import PIN_LENGTH_MAX, PIN_LENGTH_MIN, lock_supports
+from .schlage import ZwaveAlarmLockSettingEntity, async_add_lock_entities
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_lock_entities(
-        coordinator, entry, async_add_entities, lambda c, e, lock: [ZwaveAlarmLockPinLengthNumber(c, e, lock)]
+        coordinator,
+        entry,
+        async_add_entities,
+        lambda c, e, lock: [ZwaveAlarmLockPinLengthNumber(c, e, lock)] if lock_supports(lock, "pinLength") else [],
     )
 
 
-class ZwaveAlarmLockPinLengthNumber(ZwaveAlarmLockConfigEntity, NumberEntity):
+class ZwaveAlarmLockPinLengthNumber(ZwaveAlarmLockSettingEntity, NumberEntity):
     """How many digits user codes must have; changing it does not rewrite codes already stored on the lock."""
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -38,7 +41,7 @@ class ZwaveAlarmLockPinLengthNumber(ZwaveAlarmLockConfigEntity, NumberEntity):
 
     @property
     def native_value(self) -> int | None:
-        value = self._config_value(self._config_key)
+        value = self._setting_value(self._setting_key)
         return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     async def async_set_native_value(self, value: float) -> None:

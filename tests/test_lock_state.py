@@ -7,10 +7,9 @@ import voluptuous as vol
 
 from custom_components.zwave_alarm.coordinator_state import StreamState, apply_event
 from custom_components.zwave_alarm.lock_state import (
-    normalise_lock,
     decode_occupied_slots,
     lock_battery_level,
-    lock_has_alarm_config,
+    lock_supports,
     occupied_slot_count,
     occupied_slots,
     pin_length_valid,
@@ -23,12 +22,12 @@ from custom_components.zwave_alarm.lock_state import (
 
 BE469 = {
     "nodeId": 21,
-    "capabilities": ["config", "schedules", "alarm_config"],
+    "supportedSettings": ["beeper", "pinLength", "alarmMode", "localControls"],
     "batteryLevel": 80,
-    "config": {"pinLength": 4},
-    "diagnostics": {"occupiedSlots": [9, 1, 2]},
+    "settings": {"pinLength": 4},
+    "diagnostics": {"occupiedUserSlots": [9, 1, 2]},
 }
-BE468 = {"nodeId": 22, "capabilities": ["config", "schedules"]}
+BE468 = {"nodeId": 22, "supportedSettings": ["beeper", "pinLength"]}
 
 
 def _state(locks=None) -> StreamState:
@@ -59,10 +58,12 @@ def test_other_events_preserve_locks() -> None:
     assert state.locks == [BE469]
 
 
-def test_alarm_config_is_gated_on_the_capability() -> None:
-    assert lock_has_alarm_config(BE469)
-    assert not lock_has_alarm_config(BE468)
-    assert not lock_has_alarm_config({})
+def test_settings_are_gated_on_supported_settings() -> None:
+    assert lock_supports(BE469, "alarmMode") and lock_supports(BE469, "localControls")
+    assert lock_supports(BE468, "beeper")
+    assert not lock_supports(BE468, "alarmMode")  # BE469 only
+    assert not lock_supports({}, "beeper")
+    assert not lock_supports({"supportedSettings": None}, "beeper")
 
 
 def test_battery_and_slot_accessors_tolerate_missing_data() -> None:
@@ -105,27 +106,29 @@ def test_pin_length_valid(code, length, ok) -> None:
 
 
 def test_weekday_schedule_validates_and_coerces() -> None:
-    fields = {"weekday": "monday", "startHour": "8", "startMinute": 0, "stopHour": 17, "stopMinute": 30}
+    fields = {"weekday": "1", "startHour": "8", "startMinute": 0, "stopHour": 17, "stopMinute": 30}
     assert validate_schedule("weekday", fields) == {
-        "weekday": "monday", "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30,
+        "weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30,
     }
 
 
 @pytest.mark.parametrize("change", [
-    {"weekday": "funday"}, {"startHour": 24}, {"stopMinute": 60}, {"startHour": 18}, {"stopHour": 8, "stopMinute": 0},
+    {"weekday": 7}, {"startHour": 24}, {"stopMinute": 60}, {"startHour": 18}, {"stopHour": 8, "stopMinute": 0},
 ])
 def test_weekday_schedule_rejects_bad_values(change) -> None:
-    fields = {"weekday": "monday", "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30, **change}
+    fields = {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30, **change}
     with pytest.raises(vol.Invalid):
         validate_schedule("weekday", fields)
 
 
 def test_yearday_schedule_requires_start_before_stop() -> None:
     fields = {
-        "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
-        "stopYear": 2026, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
+        "startYear": 26, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
+        "stopYear": 26, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
     }
     assert validate_schedule("yearday", fields) == fields
+    with pytest.raises(vol.Invalid):  # four-digit years are the integration's input, not the service's
+        validate_schedule("yearday", {**fields, "startYear": 2026})
     with pytest.raises(vol.Invalid):
         validate_schedule("yearday", {**fields, "stopDay": 2, "stopHour": 0, "stopMinute": 0})
     with pytest.raises(vol.Invalid):
@@ -133,9 +136,9 @@ def test_yearday_schedule_requires_start_before_stop() -> None:
 
 
 def test_daily_repeating_schedule() -> None:
-    fields = {"weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30}
+    fields = {"weekdays": [1, 5], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30}
     assert validate_schedule("daily_repeating", fields) == fields
-    for bad in ({"weekdays": []}, {"weekdays": ["monday", "monday"]}, {"durationHour": 0, "durationMinute": 0}):
+    for bad in ({"weekdays": []}, {"weekdays": [1, 1]}, {"weekdays": [7]}, {"durationHour": 0, "durationMinute": 0}):
         with pytest.raises(vol.Invalid):
             validate_schedule("daily_repeating", {**fields, **bad})
 
@@ -158,15 +161,15 @@ def test_schedule_slot_count_reads_per_kind_counts() -> None:
 
 def test_schedule_from_service_builds_each_kind() -> None:
     assert schedule_from_service("weekday", {"weekday": "friday", "start_time": time(8, 15), "end_time": time(17, 0)}) == {
-        "weekday": "friday", "startHour": 8, "startMinute": 15, "stopHour": 17, "stopMinute": 0,
+        "weekday": 5, "startHour": 8, "startMinute": 15, "stopHour": 17, "stopMinute": 0,
     }
     assert schedule_from_service("yearday", {"start": datetime(2026, 1, 2, 9, 30), "end": datetime(2026, 2, 3, 18, 45)}) == {
-        "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 9, "startMinute": 30,
-        "stopYear": 2026, "stopMonth": 2, "stopDay": 3, "stopHour": 18, "stopMinute": 45,
+        "startYear": 26, "startMonth": 1, "startDay": 2, "startHour": 9, "startMinute": 30,
+        "stopYear": 26, "stopMonth": 2, "stopDay": 3, "stopHour": 18, "stopMinute": 45,
     }
     assert schedule_from_service(
         "daily_repeating", {"weekdays": ["monday", "friday"], "start_time": time(8, 0), "duration": timedelta(hours=9, minutes=30)}
-    ) == {"weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30}
+    ) == {"weekdays": [1, 5], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30}
 
 
 def test_schedule_from_service_reports_missing_and_invalid_input() -> None:
@@ -180,40 +183,6 @@ def test_schedule_from_service_reports_missing_and_invalid_input() -> None:
         schedule_from_service("nonsense", {})
 
 
-def test_normalise_lock_reads_the_services_spelling() -> None:
-    lock = normalise_lock({
-        "nodeId": 5, "model": "BE469", "supportedSettings": ["beeper", "alarmMode"],
-        "settings": {"beeper": True, "localControls": False},
-        "diagnostics": {"occupiedUserSlots": [3, 1]}, "scheduleSlots": {"weekDay": 7},
-    })
-    assert lock["config"] == {"beeper": True, "localControls": False}
-    assert lock_has_alarm_config(lock)
-    assert occupied_slots(lock) == [1, 3]
-    assert schedule_slot_count(lock, "weekday") == 7
-
-
-def test_normalise_lock_reads_the_clients_spelling() -> None:
-    lock = normalise_lock({
-        "nodeId": 5, "model": "BE469", "capabilities": ["schedules", "alarm"],
-        "config": {"localControlsEnabled": True}, "diagnostics": {"occupiedSlots": [2]}, "scheduleSlots": {"weekday": 4},
-    })
-    assert lock["config"] == {"localControls": True}
-    assert lock["capabilities"] == ["schedules", "alarm_config"]
-    assert occupied_slots(lock) == [2]
-    assert schedule_slot_count(lock, "weekday") == 4
-
-
-def test_normalise_lock_gates_alarm_settings_on_what_the_lock_lists() -> None:
-    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE468", "supportedSettings": ["beeper"]}))
-    # an explicit list wins over the model, so a BE469 that doesn't list alarm settings gets none
-    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE469", "supportedSettings": ["beeper"]}))
-    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE468", "capabilities": ["schedules"]}))
-    assert lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE469"}))  # nothing else to go on
-
-
-def test_normalise_lock_tolerates_sparse_input_and_keeps_originals() -> None:
-    lock = normalise_lock({"nodeId": 9, "settings": None})
-    assert lock["config"] == {} and lock["diagnostics"] == {} and lock["scheduleSlots"] == {}
-    original = {"nodeId": 9, "settings": {"beeper": True}}
-    assert normalise_lock(original)["settings"] == {"beeper": True}
-    assert "config" not in original
+def test_schedule_from_service_rejects_years_outside_2000_2099() -> None:
+    with pytest.raises(vol.Invalid, match="2000 and 2099"):
+        schedule_from_service("yearday", {"start": datetime(1999, 1, 1), "end": datetime(2100, 1, 1)})

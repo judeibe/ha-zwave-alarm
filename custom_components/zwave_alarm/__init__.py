@@ -59,7 +59,7 @@ KEYPAD_CHIME_SCHEMA = cv.make_entity_service_schema(
 SERVICE_SET_LOCK_SCHEDULE = "set_lock_schedule"
 SERVICE_CLEAR_LOCK_SCHEDULE = "clear_lock_schedule"
 SERVICE_SET_LOCK_SCHEDULES_ENABLED = "set_lock_schedules_enabled"
-SERVICE_GET_LOCK_SCHEDULES = "get_lock_schedules"
+SERVICE_GET_LOCK_SCHEDULE = "get_lock_schedule"
 ATTR_USER_ID = "user_id"
 ATTR_SLOT = "slot"
 ATTR_SCHEDULE_TYPE = "schedule_type"
@@ -89,7 +89,7 @@ CLEAR_LOCK_SCHEDULE_SCHEMA = vol.Schema(
 SET_LOCK_SCHEDULES_ENABLED_SCHEMA = vol.Schema(
     {**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID, vol.Required(ATTR_ENABLED): cv.boolean}
 )
-GET_LOCK_SCHEDULES_SCHEMA = vol.Schema({**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID})
+GET_LOCK_SCHEDULE_SCHEMA = CLEAR_LOCK_SCHEDULE_SCHEMA
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -190,10 +190,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         for coordinator, lock in _lock_targets(call):
             await coordinator.async_set_lock_schedules_enabled(lock["nodeId"], call.data[ATTR_USER_ID], call.data[ATTR_ENABLED])
 
-    async def _get_lock_schedules(call: ServiceCall) -> ServiceResponse:
+    async def _get_lock_schedule(call: ServiceCall) -> ServiceResponse:
+        kind = call.data[ATTR_SCHEDULE_TYPE]
         targets = _lock_targets(call)
+        for _, lock in targets:
+            _check_slot(lock, kind, call.data[ATTR_SLOT])
         return {
-            _lock_name(lock): await coordinator.async_get_lock_schedules(lock["nodeId"], call.data[ATTR_USER_ID])
+            _lock_name(lock): await coordinator.async_get_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT]
+            )
             for coordinator, lock in targets
         }
 
@@ -204,7 +209,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN, SERVICE_SET_LOCK_SCHEDULES_ENABLED, _set_lock_schedules_enabled, schema=SET_LOCK_SCHEDULES_ENABLED_SCHEMA
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_GET_LOCK_SCHEDULES, _get_lock_schedules, schema=GET_LOCK_SCHEDULES_SCHEMA,
+        DOMAIN, SERVICE_GET_LOCK_SCHEDULE, _get_lock_schedule, schema=GET_LOCK_SCHEDULE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     async_register_commands(hass)  # admin-only websocket API for the configuration panel

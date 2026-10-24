@@ -41,7 +41,6 @@ from .coordinator_state import (
     security_event_payload,
 )
 from .keypad_state import keypad_event_payload
-from .lock_state import normalise_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,6 +110,8 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
         except api.InvalidAuth as err:
             raise HomeAssistantError("The Z-Wave Alarm service refused the request.") from err
+        except api.LockUnavailable as err:  # a CannotConnect subclass, so it has to come first
+            raise HomeAssistantError(f"The lock did not respond to the {what}: {err}") from err
         except api.CannotConnect as err:
             raise HomeAssistantError("Could not reach the Z-Wave Alarm service.") from err
         except api.ZwaveAlarmError as err:
@@ -125,39 +126,39 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             "chime",
         )
 
-    async def async_update_lock_config(self, node_id: int, **changes: Any) -> None:
-        """Write lock parameters via `PATCH /api/v1/locks/{nodeId}/config` and publish the returned lock at once."""
+    async def async_update_lock_settings(self, node_id: int, **changes: Any) -> None:
+        """Write lock settings via `PATCH /api/v1/locks/{nodeId}/settings` and publish the returned lock at once."""
         lock = await self._call_client(
-            api.async_update_lock_config(
+            api.async_update_lock_settings(
                 self._session, self._host, self._port, None, node_id, changes, secure=self._secure
             ),
             "setting",
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
-        self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": normalise_lock(lock)}))
+        self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": lock}))
 
-    async def async_get_lock_schedules(self, node_id: int, user_id: int) -> dict[str, Any]:
+    async def async_get_lock_schedule(self, node_id: int, user_id: int, kind: str, slot_id: int) -> dict[str, Any]:
         return await self._call_client(
-            api.async_get_lock_schedules(
-                self._session, self._host, self._port, None, node_id, user_id, secure=self._secure
+            api.async_get_lock_schedule(
+                self._session, self._host, self._port, None, node_id, user_id, kind, slot_id, secure=self._secure
             ),
             "schedule request",
         )
 
     async def async_set_lock_schedule(
-        self, node_id: int, user_id: int, kind: str, slot: int, schedule: dict[str, Any]
+        self, node_id: int, user_id: int, kind: str, slot_id: int, schedule: dict[str, Any]
     ) -> None:
         await self._call_client(
             api.async_set_lock_schedule(
-                self._session, self._host, self._port, None, node_id, user_id, kind, slot, schedule, secure=self._secure
+                self._session, self._host, self._port, None, node_id, user_id, kind, slot_id, schedule, secure=self._secure
             ),
             "schedule",
         )
 
-    async def async_clear_lock_schedule(self, node_id: int, user_id: int, kind: str, slot: int) -> None:
+    async def async_clear_lock_schedule(self, node_id: int, user_id: int, kind: str, slot_id: int) -> None:
         await self._call_client(
             api.async_clear_lock_schedule(
-                self._session, self._host, self._port, None, node_id, user_id, kind, slot, secure=self._secure
+                self._session, self._host, self._port, None, node_id, user_id, kind, slot_id, secure=self._secure
             ),
             "schedule",
         )
@@ -213,10 +214,6 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
     async def _handle_event(self, event: dict[str, Any]) -> None:
         """Fold one server->client event into `self.data`, forwarding security events to listeners."""
-        if event["type"] == "snapshot" and event.get("locks"):
-            event = {**event, "locks": [normalise_lock(lock) for lock in event["locks"]]}
-        elif event["type"] == "lock.changed":
-            event = {**event, "lock": normalise_lock(event["lock"])}
         if event["type"] == "event.recorded":
             event_type, attributes = security_event_payload(event)
             for listener in list(self._event_listeners):

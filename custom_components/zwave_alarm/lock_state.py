@@ -10,11 +10,6 @@ from typing import Any
 
 import voluptuous as vol
 
-CAPABILITY_ALARM_CONFIG = "alarm_config"  # BE469 only: alarm mode, sensitivities and local-controls parameters
-
-# Boolean parameters shared by the BE468 and BE469 (config key -> switch translation key).
-BOOLEAN_CONFIG_KEYS = ("beeper", "vacationMode", "lockAndLeave", "autoLock")
-
 PIN_LENGTH_MIN = 4
 PIN_LENGTH_MAX = 8
 
@@ -33,17 +28,20 @@ DIAGNOSTIC_COUNTERS = (
     "electronicHighPreloadTransitionCount",
 )
 
-SCHEDULE_KINDS = ("weekday", "yearday", "daily_repeating")
+# Schedule types the actions expose, and the service's `ScheduleKind` for each (also the `scheduleSlots` key).
+CLIENT_SCHEDULE_KINDS = {"weekday": "weekDay", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
+SCHEDULE_KINDS = tuple(CLIENT_SCHEDULE_KINDS)
+# The service numbers weekdays 0 (Sunday) to 6 (Saturday); the actions take names.
 WEEKDAYS = ("sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")
 
 _HOUR = vol.All(vol.Coerce(int), vol.Range(min=0, max=23))
 _MINUTE = vol.All(vol.Coerce(int), vol.Range(min=0, max=59))
-_YEAR = vol.All(vol.Coerce(int), vol.Range(min=2000, max=2099))
+_YEAR = vol.All(vol.Coerce(int), vol.Range(min=0, max=99))  # two digits: 26 is 2026
 _MONTH = vol.All(vol.Coerce(int), vol.Range(min=1, max=12))
 _DAY = vol.All(vol.Coerce(int), vol.Range(min=1, max=31))
-_WEEKDAY = vol.In(WEEKDAYS)
+_WEEKDAY = vol.All(vol.Coerce(int), vol.Range(min=0, max=6))
 
-# Field schemas per schedule kind, mirroring zwave-js's ScheduleEntryLock*Schedule types.
+# Field schemas per schedule type, in the service's encoding (mirrors zwave-js's ScheduleEntryLock*Schedule types).
 SCHEDULE_FIELDS: dict[str, dict[str, Any]] = {
     "weekday": {
         "weekday": _WEEKDAY,
@@ -74,48 +72,15 @@ SCHEDULE_FIELDS: dict[str, dict[str, Any]] = {
 }
 
 
-def lock_has_alarm_config(lock: dict[str, Any]) -> bool:
-    """True for locks with the BE469-only alarm parameters (0x07-0x0B); the BE468 lacks them."""
-    return CAPABILITY_ALARM_CONFIG in lock.get("capabilities", [])
-
-
-def normalise_lock(lock: dict[str, Any]) -> dict[str, Any]:
-    """Return `lock` in the one shape the entities read, whichever spelling the service and client use.
-
-    The service reports `settings`, `supportedSettings`, `localControls` and `diagnostics.occupiedUserSlots`; the
-    client's typed models say `config`, `capabilities` (`alarm`) and `diagnostics.occupiedSlots`, and
-    `scheduleSlots` is keyed `weekDay` or `weekday`. Reading both here keeps every entity on a single shape, and the
-    original keys are left alone. The BE469-only parameters are detected from `supportedSettings` when the lock
-    lists them, else from the capabilities, else from the model.
-    """
-    raw_settings = lock.get("settings") if isinstance(lock.get("settings"), dict) else lock.get("config")
-    config = dict(raw_settings) if isinstance(raw_settings, dict) else {}
-    if "localControlsEnabled" in config:
-        config.setdefault("localControls", config.pop("localControlsEnabled"))
-
-    diagnostics = dict(lock_diagnostics(lock))
-    if "occupiedUserSlots" in diagnostics:
-        diagnostics.setdefault("occupiedSlots", diagnostics["occupiedUserSlots"])
-
-    slots = dict(lock["scheduleSlots"]) if isinstance(lock.get("scheduleSlots"), dict) else {}
-    if "weekday" in slots:
-        slots.setdefault("weekDay", slots["weekday"])
-
-    capabilities = [c for c in lock.get("capabilities", []) if c not in ("alarm", CAPABILITY_ALARM_CONFIG)]
+def lock_supports(lock: dict[str, Any], setting: str) -> bool:
+    """True when the lock lists `setting` as supported; the BE469-only ones are absent from a BE468's list."""
     supported = lock.get("supportedSettings")
-    if isinstance(supported, list):
-        alarm = "alarmMode" in supported
-    else:
-        alarm = bool({"alarm", CAPABILITY_ALARM_CONFIG} & set(lock.get("capabilities", []))) or lock.get("model") == "BE469"
-    if alarm:
-        capabilities.append(CAPABILITY_ALARM_CONFIG)
-
-    return {**lock, "config": config, "diagnostics": diagnostics, "scheduleSlots": slots, "capabilities": capabilities}
+    return isinstance(supported, list) and setting in supported
 
 
-def lock_config(lock: dict[str, Any]) -> dict[str, Any]:
-    config = lock.get("config")
-    return config if isinstance(config, dict) else {}
+def lock_settings(lock: dict[str, Any]) -> dict[str, Any]:
+    settings = lock.get("settings")
+    return settings if isinstance(settings, dict) else {}
 
 
 def lock_diagnostics(lock: dict[str, Any]) -> dict[str, Any]:
@@ -142,12 +107,12 @@ def alarm_mode_option(value: Any) -> str | None:
 
 
 def occupied_slot_count(lock: dict[str, Any]) -> int | None:
-    slots = lock_diagnostics(lock).get("occupiedSlots")
+    slots = lock_diagnostics(lock).get("occupiedUserSlots")
     return len(slots) if isinstance(slots, list) else None
 
 
 def occupied_slots(lock: dict[str, Any]) -> list[int]:
-    slots = lock_diagnostics(lock).get("occupiedSlots")
+    slots = lock_diagnostics(lock).get("occupiedUserSlots")
     return sorted(slot for slot in slots if isinstance(slot, int)) if isinstance(slots, list) else []
 
 
@@ -192,16 +157,10 @@ def validate_schedule(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
     return schedule
 
 
-# `scheduleSlots` key per schedule kind (the Schedule Entry Lock `getNumSlots` result).
-SLOT_COUNT_KEYS = {"weekday": "weekDay", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
-# The client's `ScheduleKind` for each kind the services expose.
-CLIENT_SCHEDULE_KINDS = {"weekday": "weekday", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
-
-
 def schedule_slot_count(lock: dict[str, Any], kind: str) -> int | None:
     """How many slots per user the lock offers for `kind`; `None` when the lock hasn't reported it."""
     slots = lock.get("scheduleSlots")
-    count = slots.get(SLOT_COUNT_KEYS[kind]) if isinstance(slots, dict) else None
+    count = slots.get(CLIENT_SCHEDULE_KINDS[kind]) if isinstance(slots, dict) else None
     return count if isinstance(count, int) and not isinstance(count, bool) else None
 
 
@@ -209,7 +168,8 @@ def schedule_from_service(kind: str, data: dict[str, Any]) -> dict[str, Any]:
     """Turn the schedule service's friendly inputs into Schedule Entry Lock fields (then validate them).
 
     `start_time`/`end_time` are `datetime.time`, `start`/`end` are `datetime.datetime` and `duration` is a
-    `datetime.timedelta`, as coerced by the service schema; a missing input raises `vol.Invalid`.
+    `datetime.timedelta`, as coerced by the service schema; a missing input raises `vol.Invalid`. Weekday names
+    become the service's 0 (Sunday) to 6 numbers and years become two digits (2026 is 26), so only 2000-2099 fit.
     """
 
     def need(*keys: str) -> list[Any]:
@@ -221,23 +181,25 @@ def schedule_from_service(kind: str, data: dict[str, Any]) -> dict[str, Any]:
     if kind == "weekday":
         weekday, start, end = need("weekday", "start_time", "end_time")
         fields = {
-            "weekday": weekday,
+            "weekday": WEEKDAYS.index(weekday),
             "startHour": start.hour, "startMinute": start.minute,
             "stopHour": end.hour, "stopMinute": end.minute,
         }
     elif kind == "yearday":
         start, end = need("start", "end")
+        if not (2000 <= start.year <= 2099 and 2000 <= end.year <= 2099):
+            raise vol.Invalid("Years must be between 2000 and 2099")
         fields = {
-            "startYear": start.year, "startMonth": start.month, "startDay": start.day,
+            "startYear": start.year % 100, "startMonth": start.month, "startDay": start.day,
             "startHour": start.hour, "startMinute": start.minute,
-            "stopYear": end.year, "stopMonth": end.month, "stopDay": end.day,
+            "stopYear": end.year % 100, "stopMonth": end.month, "stopDay": end.day,
             "stopHour": end.hour, "stopMinute": end.minute,
         }
     elif kind == "daily_repeating":
         weekdays, start, duration = need("weekdays", "start_time", "duration")
         minutes = int(duration.total_seconds() // 60)
         fields = {
-            "weekdays": list(weekdays),
+            "weekdays": [WEEKDAYS.index(day) for day in weekdays],
             "startHour": start.hour, "startMinute": start.minute,
             "durationHour": minutes // 60, "durationMinute": minutes % 60,
         }

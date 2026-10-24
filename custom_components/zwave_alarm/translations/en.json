@@ -202,11 +202,11 @@
         },
         "start": {
           "name": "Start",
-          "description": "When access begins (year day schedules)."
+          "description": "When access begins (year day schedules). The lock stores two-digit years, so only 2000-2099 work."
         },
         "end": {
           "name": "End",
-          "description": "When access ends; must be after the start (year day schedules)."
+          "description": "When access ends; must be after the start (year day schedules). Only 2000-2099 work."
         },
         "duration": {
           "name": "Duration",
@@ -254,9 +254,9 @@
         }
       }
     },
-    "get_lock_schedules": {
-      "name": "Get lock schedules",
-      "description": "Returns the schedules stored on the lock for a user.",
+    "get_lock_schedule": {
+      "name": "Get lock schedule",
+      "description": "Returns one schedule slot stored on the lock for a user; the schedule is empty when the slot is unused.",
       "fields": {
         "device_id": {
           "name": "Locks",
@@ -265,6 +265,14 @@
         "user_id": {
           "name": "User",
           "description": "The lock user (code slot) the schedule belongs to."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "The schedule slot to read."
+        },
+        "schedule_type": {
+          "name": "Schedule type",
+          "description": "The kind of schedule to read."
         }
       }
     }
