@@ -28,3 +28,177 @@ keypad_chime:
           max: 99
           step: 1
           mode: slider
+set_lock_schedule:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zwave_alarm
+          manufacturer: Schlage
+          multiple: true
+    user_id:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    schedule_type:
+      required: true
+      example: weekday
+      selector:
+        select:
+          options:
+            - weekday
+            - yearday
+            - daily_repeating
+          translation_key: schedule_type
+    weekday:
+      required: false
+      example: monday
+      selector:
+        select:
+          options: &weekdays
+            - sunday
+            - monday
+            - tuesday
+            - wednesday
+            - thursday
+            - friday
+            - saturday
+          translation_key: weekday
+    weekdays:
+      required: false
+      example: "[monday, friday]"
+      selector:
+        select:
+          multiple: true
+          options: *weekdays
+          translation_key: weekday
+    start_time:
+      required: false
+      example: "08:00:00"
+      selector:
+        time:
+    end_time:
+      required: false
+      example: "17:30:00"
+      selector:
+        time:
+    start:
+      required: false
+      example: "2026-01-02 00:00:00"
+      selector:
+        datetime:
+    end:
+      required: false
+      example: "2026-01-09 23:59:00"
+      selector:
+        datetime:
+    duration:
+      required: false
+      example: "09:30:00"
+      selector:
+        duration:
+clear_lock_schedule:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zwave_alarm
+          manufacturer: Schlage
+          multiple: true
+    user_id:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    schedule_type:
+      required: true
+      example: weekday
+      selector:
+        select:
+          options:
+            - weekday
+            - yearday
+            - daily_repeating
+          translation_key: schedule_type
+set_lock_schedules_enabled:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zwave_alarm
+          manufacturer: Schlage
+          multiple: true
+    user_id:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    enabled:
+      required: true
+      example: true
+      selector:
+        boolean:
+get_lock_schedule:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zwave_alarm
+          manufacturer: Schlage
+          multiple: true
+    user_id:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    schedule_type:
+      required: true
+      example: weekday
+      selector:
+        select:
+          options:
+            - weekday
+            - yearday
+            - daily_repeating
+          translation_key: schedule_type

@@ -14,10 +14,13 @@ WebSocket connection to `wss://<host>/api/v1/stream` and is stored in
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_HOST, CONF_PORT
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
@@ -28,10 +31,18 @@ from homeassistant.helpers.typing import ConfigType
 from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import keypad_device_identifier
+from .lock_state import (
+    CLIENT_SCHEDULE_KINDS,
+    SCHEDULE_KINDS,
+    WEEKDAYS,
+    schedule_from_service,
+    schedule_slot_count,
+)
 from .panel import async_register_panel, async_remove_panel
+from .schlage import lock_device_identifier
 from .websocket_api import async_register_commands
 
-PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "sensor"]
+PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "number", "select", "sensor", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -45,12 +56,49 @@ KEYPAD_CHIME_SCHEMA = cv.make_entity_service_schema(
     }
 )
 
+SERVICE_SET_LOCK_SCHEDULE = "set_lock_schedule"
+SERVICE_CLEAR_LOCK_SCHEDULE = "clear_lock_schedule"
+SERVICE_SET_LOCK_SCHEDULES_ENABLED = "set_lock_schedules_enabled"
+SERVICE_GET_LOCK_SCHEDULE = "get_lock_schedule"
+ATTR_USER_ID = "user_id"
+ATTR_SLOT = "slot"
+ATTR_SCHEDULE_TYPE = "schedule_type"
+ATTR_ENABLED = "enabled"
+_USER_ID = vol.All(vol.Coerce(int), vol.Range(min=1, max=30))  # the lock has 30 user slots
+_SLOT = vol.All(vol.Coerce(int), vol.Range(min=1, max=255))
+_SCHEDULE_TYPE = vol.In(SCHEDULE_KINDS)
+_DEVICE_TARGET = {vol.Required(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string])}
+SET_LOCK_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        **_DEVICE_TARGET,
+        vol.Required(ATTR_USER_ID): _USER_ID,
+        vol.Required(ATTR_SLOT): _SLOT,
+        vol.Required(ATTR_SCHEDULE_TYPE): _SCHEDULE_TYPE,
+        vol.Optional("weekday"): vol.In(WEEKDAYS),
+        vol.Optional("weekdays"): vol.All(cv.ensure_list, [vol.In(WEEKDAYS)]),
+        vol.Optional("start_time"): cv.time,
+        vol.Optional("end_time"): cv.time,
+        vol.Optional("start"): cv.datetime,
+        vol.Optional("end"): cv.datetime,
+        vol.Optional("duration"): cv.positive_time_period,
+    }
+)
+CLEAR_LOCK_SCHEDULE_SCHEMA = vol.Schema(
+    {**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID, vol.Required(ATTR_SLOT): _SLOT, vol.Required(ATTR_SCHEDULE_TYPE): _SCHEDULE_TYPE}
+)
+SET_LOCK_SCHEDULES_ENABLED_SCHEMA = vol.Schema(
+    {**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID, vol.Required(ATTR_ENABLED): cv.boolean}
+)
+GET_LOCK_SCHEDULE_SCHEMA = CLEAR_LOCK_SCHEDULE_SCHEMA
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the domain-wide services (they must exist whether or not an entry is loaded)."""
 
-    async def _keypad_chime(call: ServiceCall) -> None:
-        # Targets are a keypad's device, or any of its entities (area/label targets aren't resolved).
+    def _targets(
+        call: ServiceCall, collection: str, identifier: Callable[[str, int], tuple[str, str]], not_found_key: str
+    ) -> list[tuple[ZwaveAlarmCoordinator, dict[str, Any]]]:
+        # Targets are a node's device, or any of its entities (area/label targets aren't resolved).
         entity_registry = er.async_get(hass)
         device_ids = set(cv.ensure_list(call.data.get(ATTR_DEVICE_ID)))
         for entity_id in cv.ensure_list(call.data.get(ATTR_ENTITY_ID)):
@@ -64,11 +112,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             if device is None:
                 continue
             for coordinator in _coordinators(hass):
-                for keypad in coordinator.data.keypads if coordinator.data else []:
-                    if keypad_device_identifier(coordinator.config_entry.entry_id, keypad["nodeId"]) in device.identifiers:
-                        targets.append((coordinator, keypad))
+                for node in getattr(coordinator.data, collection) if coordinator.data else []:
+                    if identifier(coordinator.config_entry.entry_id, node["nodeId"]) in device.identifiers:
+                        targets.append((coordinator, node))
         if not targets:
-            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="keypad_not_found")
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key=not_found_key)
+        return targets
+
+    async def _keypad_chime(call: ServiceCall) -> None:
+        targets = _targets(call, "keypads", keypad_device_identifier, "keypad_not_found")
 
         sound = call.data[ATTR_SOUND]
         # Validate every target before sending anything, so a bad one doesn't leave a partial chime.
@@ -87,7 +139,79 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         for coordinator, keypad in targets:
             await coordinator.async_chime_keypad(keypad["nodeId"], sound, call.data.get(ATTR_VOLUME))
 
+    def _lock_targets(call: ServiceCall) -> list[tuple[ZwaveAlarmCoordinator, dict[str, Any]]]:
+        return _targets(call, "locks", lock_device_identifier, "lock_not_found")
+
+    def _lock_name(lock: dict[str, Any]) -> str:
+        return lock.get("label") or f"Lock {lock['nodeId']}"
+
+    def _check_slot(lock: dict[str, Any], kind: str, slot: int) -> None:
+        slots = schedule_slot_count(lock, kind)
+        if not slots:  # None: not reported yet; 0: this kind isn't supported (e.g. daily repeating)
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="schedule_unsupported",
+                translation_placeholders={"lock": _lock_name(lock), "kind": kind},
+            )
+        if slot > slots:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="schedule_slot_out_of_range",
+                translation_placeholders={"lock": _lock_name(lock), "slot": str(slot), "slots": str(slots)},
+            )
+
+    async def _set_lock_schedule(call: ServiceCall) -> None:
+        kind = call.data[ATTR_SCHEDULE_TYPE]
+        try:
+            schedule = schedule_from_service(kind, call.data)
+        except vol.Invalid as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="schedule_invalid", translation_placeholders={"error": str(err)}
+            ) from err
+        targets = _lock_targets(call)
+        for _, lock in targets:  # validate every target before sending anything
+            _check_slot(lock, kind, call.data[ATTR_SLOT])
+        for coordinator, lock in targets:
+            await coordinator.async_set_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT], schedule
+            )
+
+    async def _clear_lock_schedule(call: ServiceCall) -> None:
+        kind = call.data[ATTR_SCHEDULE_TYPE]
+        targets = _lock_targets(call)
+        for _, lock in targets:
+            _check_slot(lock, kind, call.data[ATTR_SLOT])
+        for coordinator, lock in targets:
+            await coordinator.async_clear_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT]
+            )
+
+    async def _set_lock_schedules_enabled(call: ServiceCall) -> None:
+        for coordinator, lock in _lock_targets(call):
+            await coordinator.async_set_lock_schedules_enabled(lock["nodeId"], call.data[ATTR_USER_ID], call.data[ATTR_ENABLED])
+
+    async def _get_lock_schedule(call: ServiceCall) -> ServiceResponse:
+        kind = call.data[ATTR_SCHEDULE_TYPE]
+        targets = _lock_targets(call)
+        for _, lock in targets:
+            _check_slot(lock, kind, call.data[ATTR_SLOT])
+        return {
+            _lock_name(lock): await coordinator.async_get_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT]
+            )
+            for coordinator, lock in targets
+        }
+
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_SET_LOCK_SCHEDULE, _set_lock_schedule, schema=SET_LOCK_SCHEDULE_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_CLEAR_LOCK_SCHEDULE, _clear_lock_schedule, schema=CLEAR_LOCK_SCHEDULE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_LOCK_SCHEDULES_ENABLED, _set_lock_schedules_enabled, schema=SET_LOCK_SCHEDULES_ENABLED_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_GET_LOCK_SCHEDULE, _get_lock_schedule, schema=GET_LOCK_SCHEDULE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
     async_register_commands(hass)  # admin-only websocket API for the configuration panel
     return True
 
