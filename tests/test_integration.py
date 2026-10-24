@@ -80,6 +80,9 @@ class FakeService:
         self.lock_calls: list[tuple] = []
         self.lock_status = 200  # non-2xx makes every lock write fail with the matching error body
         self.schedule: dict | None = {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}
+        self.keypad_settings: dict | None = {"requireCodeToArm": False}
+        self.keypad_settings_calls: list[dict] = []
+        self.keypad_settings_status = 200
         self.chime_calls: list[dict] = []
         self.chime_status = 204
         self.auth_headers: list[str | None] = []
@@ -104,6 +107,15 @@ class FakeService:
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
+
+    async def patch_keypad_settings(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.keypad_settings_calls.append(body)
+        if self.keypad_settings_status != 200:
+            return web.json_response({"error": {"code": "forbidden", "message": "no"}}, status=self.keypad_settings_status)
+        self.keypad_settings = {**self.keypad_settings, **body}
+        return web.json_response(self.keypad_settings)
 
     def _lock_failure(self) -> web.Response | None:
         if self.lock_status < 300:
@@ -143,6 +155,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.keypad_settings is not None:
+            snapshot["keypadSettings"] = copy.deepcopy(self.keypad_settings)
         if self.locks is not None:
             snapshot["locks"] = copy.deepcopy(self.locks)
         await ws.send_json(snapshot)
@@ -171,6 +185,7 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
+    app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
     app.router.add_put("/api/v1/locks/{node_id}/users/{user_id}/schedules/enabled", fake.lock_schedules_enabled)
     app.router.add_route("*", "/api/v1/locks/{node_id}/users/{user_id}/schedules/{kind}/{slot_id}", fake.lock_schedule)
@@ -877,3 +892,61 @@ async def test_schedule_service_maps_lock_errors(hass, service, setup, locks) ->
     locks.lock_status = 502
     with pytest.raises(HomeAssistantError, match="did not respond"):
         await hass.services.async_call(DOMAIN, "clear_lock_schedule", data, blocking=True)
+
+
+SWITCH = "switch.z_wave_alarm_keypad_requires_pin_to_arm"
+
+
+async def test_keypad_pin_switch_follows_the_snapshot(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.keypad_settings = {"requireCodeToArm": True}
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get(SWITCH).state == "on"
+
+
+async def test_keypad_pin_switch_writes_the_setting_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+    assert hass.states.get(SWITCH).state == "off"
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": SWITCH}, blocking=True)
+    assert service.keypad_settings_calls == [{"requireCodeToArm": True}]
+    assert hass.states.get(SWITCH).state == "on"
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": SWITCH}, blocking=True)
+    assert service.keypad_settings_calls[-1] == {"requireCodeToArm": False}
+    assert hass.states.get(SWITCH).state == "off"
+
+
+async def test_keypad_pin_switch_follows_a_change_made_elsewhere(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await _push(hass, service, {"type": "keypad.settings", "settings": {"requireCodeToArm": True}})
+
+    assert hass.states.get(SWITCH).state == "on"
+
+
+async def test_keypad_pin_switch_refused_by_the_service_raises_and_stays_put(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.keypad_settings_status = 403
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": SWITCH}, blocking=True)
+    assert hass.states.get(SWITCH).state == "off"
+
+
+async def test_no_keypad_pin_switch_without_keypads_or_on_an_older_service(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.keypads = None
+    await setup()
+    await _settle(hass, service)
+    assert hass.states.get(SWITCH) is None
+
+
+async def test_no_keypad_pin_switch_when_the_service_has_no_keypad_settings(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.keypad_settings = None
+    await setup()
+    await _settle(hass, service)
+    assert hass.states.get(SWITCH) is None

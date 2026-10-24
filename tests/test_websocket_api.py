@@ -130,6 +130,47 @@ async def test_overview_summarises_alarm_state_and_faults(hass, hass_ws_client, 
     assert result["faults"] == {"offline": 1, "low_battery": 1}
 
 
+async def test_overview_lists_keypads_and_their_settings(hass, hass_ws_client, entry) -> None:
+    keypad = {"nodeId": 12, "label": "Ring Keypad v2", "connectivityStatus": "online", "batteryLevel": 87}
+    coordinator = SimpleNamespace(
+        data=SimpleNamespace(panel=None, keypads=[keypad], keypad_settings={"requireCodeToArm": True})
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    hass.data[DOMAIN].pop(entry.entry_id)
+    assert resp["result"]["keypads"] == [keypad]
+    assert resp["result"]["keypad_settings"] == {"requireCodeToArm": True}
+
+
+async def test_overview_has_no_keypads_before_the_first_snapshot(hass, hass_ws_client, entry) -> None:
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["result"]["keypads"] == []
+    assert resp["result"]["keypad_settings"] is None
+
+
+async def test_keypad_settings_update_maps_wire_names(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_update_keypad_settings", AsyncMock(return_value={"requireCodeToArm": True})) as update:
+        resp = await _send(await hass_ws_client(hass), "keypad_settings/update", require_code_to_arm=True)
+    assert resp["success"]
+    assert resp["result"] == {"requireCodeToArm": True}
+    assert update.await_args.args[-1] == {"requireCodeToArm": True}
+
+
+async def test_keypad_settings_update_rejects_a_non_boolean(hass, hass_ws_client, entry) -> None:
+    resp = await _send(await hass_ws_client(hass), "keypad_settings/update", require_code_to_arm="yes")
+    assert not resp["success"]
+
+
 async def test_overview_has_no_panel_before_the_first_snapshot(hass, hass_ws_client, entry) -> None:
     with (
         patch(f"{API}.async_get_zones", AsyncMock(return_value=[ZONE])),

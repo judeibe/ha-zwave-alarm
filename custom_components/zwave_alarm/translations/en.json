@@ -76,6 +76,9 @@
       },
       "local_controls": {
         "name": "Local controls"
+      },
+      "keypad_require_code_to_arm": {
+        "name": "Keypad requires PIN to arm"
       }
     },
     "select": {

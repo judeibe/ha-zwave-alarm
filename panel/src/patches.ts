@@ -21,6 +21,11 @@ export const removeZone = (zoneId: string): Patch => (o) => mapZones(o, (z) => (
 export const updateZone = (zoneId: string, changes: Partial<Pick<Zone, "name" | "description">>): Patch => (o) =>
   mapZones(o, (z) => (z.id === zoneId ? { ...z, ...changes } : z));
 
+export const setKeypadRequireCode = (requireCodeToArm: boolean): Patch => (o) => ({
+  ...o,
+  keypad_settings: { ...o.keypad_settings, requireCodeToArm },
+});
+
 export const removeUser = (userId: string): Patch => (o) => ({ ...o, users: o.users.filter((u) => u.id !== userId) });
 
 export const clearUserCode = (userId: string): Patch => (o) => ({

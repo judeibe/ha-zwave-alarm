@@ -1,4 +1,5 @@
-"""Switches for the Schlage lock's on/off settings (beeper, vacation mode, Lock & Leave, auto lock, local controls)."""
+"""Switches for the Schlage lock's on/off settings (beeper, vacation mode, Lock & Leave, auto lock, local controls)
+and for requiring a PIN to arm from a keypad."""
 
 from __future__ import annotations
 
@@ -7,8 +8,10 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
@@ -32,6 +35,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         return [ZwaveAlarmLockSwitch(coordinator, entry, lock, *d) for d in SWITCHES if lock_supports(lock, d[0])]
 
     async_add_lock_entities(coordinator, entry, async_add_entities, _switches)
+    _async_add_keypad_pin_switch(coordinator, entry, async_add_entities)
+
+
+@callback
+def _async_add_keypad_pin_switch(
+    coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """Add the one keypad-wide switch once a keypad exists and the service reports its settings (older services don't)."""
+    added = False
+
+    @callback
+    def _add() -> None:
+        nonlocal added
+        data = coordinator.data
+        if added or data is None or not data.keypads or data.keypad_settings is None:
+            return
+        added = True
+        async_add_entities([ZwaveAlarmKeypadPinSwitch(coordinator, entry)])
+
+    _add()
+    entry.async_on_unload(coordinator.async_add_listener(_add))
 
 
 class ZwaveAlarmLockSwitch(ZwaveAlarmLockSettingEntity, SwitchEntity):
@@ -55,3 +79,34 @@ class ZwaveAlarmLockSwitch(ZwaveAlarmLockSettingEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._async_write(False)
+
+
+class ZwaveAlarmKeypadPinSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], SwitchEntity):
+    """Whether arming from a keypad needs a valid PIN (disarming always does). Changing it needs an administrator."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "keypad_require_code_to_arm"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:dialpad"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_keypad_require_code_to_arm"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def available(self) -> bool:
+        data = self.coordinator.data
+        return super().available and data is not None and data.keypad_settings is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        settings = self.coordinator.data.keypad_settings if self.coordinator.data is not None else None
+        value = settings.get("requireCodeToArm") if settings else None
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_keypad_settings(requireCodeToArm=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_keypad_settings(requireCodeToArm=False)

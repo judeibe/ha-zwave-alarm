@@ -15,6 +15,18 @@ def test_snapshot_carries_keypads() -> None:
     assert state.keypads == [KEYPAD]
 
 
+def test_snapshot_carries_keypad_settings_and_a_missing_one_clears_them() -> None:
+    snapshot = {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []}
+    state = apply_event(_state(), {**snapshot, "keypadSettings": {"requireCodeToArm": True}})
+    assert state.keypad_settings == {"requireCodeToArm": True}
+    assert apply_event(state, snapshot).keypad_settings is None
+
+
+def test_keypad_settings_event_replaces_the_settings() -> None:
+    state = apply_event(_state(), {"type": "keypad.settings", "settings": {"requireCodeToArm": True}})
+    assert state.keypad_settings == {"requireCodeToArm": True}
+
+
 def test_snapshot_without_keypads_clears_them() -> None:
     state = apply_event(_state([KEYPAD]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []})
     assert state.keypads == []

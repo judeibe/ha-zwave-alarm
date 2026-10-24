@@ -32,6 +32,8 @@ describe("routing", () => {
     expect(await screen.findByRole("button", { name: "New zone" })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: "People" }));
     expect(await screen.findByText("Home Assistant people")).toBeInTheDocument();
+    await user.click(screen.getByRole("navigation", { name: "Sections" }).querySelector('a[href="/keypads"]') as HTMLElement);
+    expect(await screen.findByRole("switch", { name: "Require PIN to arm" })).toBeInTheDocument();
   });
 
   it.each([["/zones/z1", "Zone name"], ["/people/person.sam", "Code"], ["/sensors/add/7", "Sensor name"], ["/sensors/s1", "Zone"]])(
@@ -241,5 +243,50 @@ describe("load failure", () => {
     expect(alert).toHaveTextContent(/unexpected error handling this request/i);
     expect(alert).toHaveTextContent("unknown_error");
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+});
+
+describe("keypads", () => {
+  it("lists each keypad with its status and battery", async () => {
+    setup("/keypads");
+    expect(await screen.findByText("Ring Keypad v2")).toBeInTheDocument();
+    expect(screen.getByText("Node 12 · battery 87%")).toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
+  });
+
+  it("explains when no keypad has been found", async () => {
+    setup("/keypads", {}, { ...OVERVIEW, keypads: [] });
+    expect(await screen.findByText("No keypads found")).toBeInTheDocument();
+  });
+
+  it("turns the PIN requirement on and sends it to the service", async () => {
+    const { call, user } = setup("/keypads");
+    const toggle = await screen.findByRole("switch", { name: "Require PIN to arm" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    expect(call).toHaveBeenCalledWith("keypad_settings/update", { require_code_to_arm: true });
+    expect(await screen.findByText("Arming now needs a PIN")).toBeInTheDocument();
+  });
+
+  it("turns it off again when it is on", async () => {
+    const { call, user } = setup("/keypads", {}, { ...OVERVIEW, keypad_settings: { requireCodeToArm: true } });
+    const toggle = await screen.findByRole("switch", { name: "Require PIN to arm" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.click(toggle);
+    expect(call).toHaveBeenCalledWith("keypad_settings/update", { require_code_to_arm: false });
+  });
+
+  it("shows the service's refusal and leaves the switch as it was", async () => {
+    const { user } = setup("/keypads", { "keypad_settings/update": "forbidden" });
+    const toggle = await screen.findByRole("switch", { name: "Require PIN to arm" });
+    await user.click(toggle);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The service denied this action.");
+    expect(screen.getByRole("switch", { name: "Require PIN to arm" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("hides the switch when the service does not report keypad settings", async () => {
+    setup("/keypads", {}, { ...OVERVIEW, keypad_settings: null });
+    expect(await screen.findByText(/Keypad settings are not available yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 });
