@@ -32,6 +32,7 @@ from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import keypad_device_identifier
 from .lock_state import (
+    CLIENT_SCHEDULE_KINDS,
     SCHEDULE_KINDS,
     WEEKDAYS,
     schedule_from_service,
@@ -63,7 +64,7 @@ ATTR_USER_ID = "user_id"
 ATTR_SLOT = "slot"
 ATTR_SCHEDULE_TYPE = "schedule_type"
 ATTR_ENABLED = "enabled"
-_USER_ID = vol.All(vol.Coerce(int), vol.Range(min=1, max=255))
+_USER_ID = vol.All(vol.Coerce(int), vol.Range(min=1, max=30))  # the lock has 30 user slots
 _SLOT = vol.All(vol.Coerce(int), vol.Range(min=1, max=255))
 _SCHEDULE_TYPE = vol.In(SCHEDULE_KINDS)
 _DEVICE_TARGET = {vol.Required(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string])}
@@ -86,7 +87,7 @@ CLEAR_LOCK_SCHEDULE_SCHEMA = vol.Schema(
     {**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID, vol.Required(ATTR_SLOT): _SLOT, vol.Required(ATTR_SCHEDULE_TYPE): _SCHEDULE_TYPE}
 )
 SET_LOCK_SCHEDULES_ENABLED_SCHEMA = vol.Schema(
-    {**_DEVICE_TARGET, vol.Required(ATTR_ENABLED): cv.boolean, vol.Optional(ATTR_USER_ID): _USER_ID}
+    {**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID, vol.Required(ATTR_ENABLED): cv.boolean}
 )
 GET_LOCK_SCHEDULES_SCHEMA = vol.Schema({**_DEVICE_TARGET, vol.Required(ATTR_USER_ID): _USER_ID})
 
@@ -171,7 +172,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         for _, lock in targets:  # validate every target before sending anything
             _check_slot(lock, kind, call.data[ATTR_SLOT])
         for coordinator, lock in targets:
-            await coordinator.async_set_lock_schedule(lock["nodeId"], call.data[ATTR_USER_ID], kind, call.data[ATTR_SLOT], schedule)
+            await coordinator.async_set_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT], schedule
+            )
 
     async def _clear_lock_schedule(call: ServiceCall) -> None:
         kind = call.data[ATTR_SCHEDULE_TYPE]
@@ -179,11 +182,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         for _, lock in targets:
             _check_slot(lock, kind, call.data[ATTR_SLOT])
         for coordinator, lock in targets:
-            await coordinator.async_clear_lock_schedule(lock["nodeId"], call.data[ATTR_USER_ID], kind, call.data[ATTR_SLOT])
+            await coordinator.async_clear_lock_schedule(
+                lock["nodeId"], call.data[ATTR_USER_ID], CLIENT_SCHEDULE_KINDS[kind], call.data[ATTR_SLOT]
+            )
 
     async def _set_lock_schedules_enabled(call: ServiceCall) -> None:
         for coordinator, lock in _lock_targets(call):
-            await coordinator.async_set_lock_schedules_enabled(lock["nodeId"], call.data[ATTR_ENABLED], call.data.get(ATTR_USER_ID))
+            await coordinator.async_set_lock_schedules_enabled(lock["nodeId"], call.data[ATTR_USER_ID], call.data[ATTR_ENABLED])
 
     async def _get_lock_schedules(call: ServiceCall) -> ServiceResponse:
         targets = _lock_targets(call)

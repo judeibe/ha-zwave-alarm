@@ -43,7 +43,7 @@ set_lock_schedule:
       selector:
         number:
           min: 1
-          max: 255
+          max: 30
           mode: box
     slot:
       required: true
@@ -125,7 +125,7 @@ clear_lock_schedule:
       selector:
         number:
           min: 1
-          max: 255
+          max: 30
           mode: box
     slot:
       required: true
@@ -154,19 +154,19 @@ set_lock_schedules_enabled:
           integration: zwave_alarm
           manufacturer: Schlage
           multiple: true
+    user_id:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
     enabled:
       required: true
       example: true
       selector:
         boolean:
-    user_id:
-      required: false
-      example: 3
-      selector:
-        number:
-          min: 1
-          max: 255
-          mode: box
 get_lock_schedules:
   fields:
     device_id:
@@ -182,5 +182,5 @@ get_lock_schedules:
       selector:
         number:
           min: 1
-          max: 255
+          max: 30
           mode: box

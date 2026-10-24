@@ -79,6 +79,40 @@ def lock_has_alarm_config(lock: dict[str, Any]) -> bool:
     return CAPABILITY_ALARM_CONFIG in lock.get("capabilities", [])
 
 
+def normalise_lock(lock: dict[str, Any]) -> dict[str, Any]:
+    """Return `lock` in the one shape the entities read, whichever spelling the service and client use.
+
+    The service reports `settings`, `supportedSettings`, `localControls` and `diagnostics.occupiedUserSlots`; the
+    client's typed models say `config`, `capabilities` (`alarm`) and `diagnostics.occupiedSlots`, and
+    `scheduleSlots` is keyed `weekDay` or `weekday`. Reading both here keeps every entity on a single shape, and the
+    original keys are left alone. The BE469-only parameters are detected from `supportedSettings` when the lock
+    lists them, else from the capabilities, else from the model.
+    """
+    raw_settings = lock.get("settings") if isinstance(lock.get("settings"), dict) else lock.get("config")
+    config = dict(raw_settings) if isinstance(raw_settings, dict) else {}
+    if "localControlsEnabled" in config:
+        config.setdefault("localControls", config.pop("localControlsEnabled"))
+
+    diagnostics = dict(lock_diagnostics(lock))
+    if "occupiedUserSlots" in diagnostics:
+        diagnostics.setdefault("occupiedSlots", diagnostics["occupiedUserSlots"])
+
+    slots = dict(lock["scheduleSlots"]) if isinstance(lock.get("scheduleSlots"), dict) else {}
+    if "weekday" in slots:
+        slots.setdefault("weekDay", slots["weekday"])
+
+    capabilities = [c for c in lock.get("capabilities", []) if c not in ("alarm", CAPABILITY_ALARM_CONFIG)]
+    supported = lock.get("supportedSettings")
+    if isinstance(supported, list):
+        alarm = "alarmMode" in supported
+    else:
+        alarm = bool({"alarm", CAPABILITY_ALARM_CONFIG} & set(lock.get("capabilities", []))) or lock.get("model") == "BE469"
+    if alarm:
+        capabilities.append(CAPABILITY_ALARM_CONFIG)
+
+    return {**lock, "config": config, "diagnostics": diagnostics, "scheduleSlots": slots, "capabilities": capabilities}
+
+
 def lock_config(lock: dict[str, Any]) -> dict[str, Any]:
     config = lock.get("config")
     return config if isinstance(config, dict) else {}
@@ -160,6 +194,8 @@ def validate_schedule(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
 
 # `scheduleSlots` key per schedule kind (the Schedule Entry Lock `getNumSlots` result).
 SLOT_COUNT_KEYS = {"weekday": "weekDay", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
+# The client's `ScheduleKind` for each kind the services expose.
+CLIENT_SCHEDULE_KINDS = {"weekday": "weekday", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
 
 
 def schedule_slot_count(lock: dict[str, Any], kind: str) -> int | None:

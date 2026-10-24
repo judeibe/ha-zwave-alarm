@@ -77,7 +77,10 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
 
     if event_type == "snapshot":
         return StreamState(
-            panel=event["panel"], zones=event["zones"], keypads=event.get("keypads") or [], locks=event.get("locks") or []
+            panel=event["panel"],
+            zones=event["zones"],
+            keypads=event.get("keypads") or [],
+            locks=event.get("locks") or [],
         )
 
     if event_type == "lock.changed":

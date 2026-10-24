@@ -22,7 +22,7 @@ SHARED_SWITCHES = (
     ("lockAndLeave", "lock_and_leave", "mdi:door-closed-lock"),
     ("autoLock", "auto_lock", "mdi:lock-clock"),
 )
-ALARM_SWITCHES = (("localControlsEnabled", "local_controls", "mdi:gesture-tap-button"),)
+ALARM_SWITCHES = (("localControls", "local_controls", "mdi:gesture-tap-button"),)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:

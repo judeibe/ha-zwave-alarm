@@ -31,26 +31,31 @@ KEYPAD = {
     "chimeSounds": ["double_beep", "guitar", "wind_chimes", "bing_bong", "doorbell"],
     "connectivityStatus": "online", "batteryLevel": 87,
 }
-BE469 = {
-    "nodeId": 21, "adapterId": "schlage-be469", "label": "Front Door Lock", "model": "BE469",
-    "capabilities": ["config", "schedules", "alarm_config"], "connectivityStatus": "online", "batteryLevel": 80,
-    "config": {
+BE469 = {  # as the service reports it
+    "nodeId": 21, "model": "BE469", "label": "Front Door Lock", "connectivityStatus": "online", "batteryLevel": 80,
+    "supportedSettings": [
+        "beeper", "vacationMode", "lockAndLeave", "autoLock", "pinLength",
+        "alarmMode", "alertSensitivity", "tamperSensitivity", "kickSensitivity", "localControls",
+    ],
+    "settings": {
         "beeper": True, "vacationMode": False, "lockAndLeave": False, "autoLock": True, "pinLength": 4,
-        "alarmMode": "alert", "alertSensitivity": 3, "tamperSensitivity": 1, "kickSensitivity": 0, "localControlsEnabled": True,
+        "alarmMode": "alert", "alertSensitivity": 3, "tamperSensitivity": 1, "kickSensitivity": 0, "localControls": True,
     },
     "diagnostics": {
         "electronicTransitionCount": 120, "mechanicalTransitionCount": 14, "electronicFailedCount": 2,
-        "electronicHighPreloadTransitionCount": 1, "occupiedSlots": [1, 2, 9], "bootloaderVersion": 3,
+        "electronicHighPreloadTransitionCount": 1, "bootloaderVersion": 3,
+        "userSlotBitField": [259, 0, 0, 0], "occupiedUserSlots": [1, 2, 9],
     },
     "scheduleSlots": {"weekDay": 7, "yearDay": 7, "dailyRepeating": 7},
+    "userSlotCount": 30,
 }
-BE468 = {
-    "nodeId": 22, "adapterId": "schlage-be468", "label": "Back Door Lock", "model": "BE468",
-    "capabilities": ["config", "schedules"], "connectivityStatus": "online", "batteryLevel": 55,
+BE468 = {  # as the client's typed models describe it
+    "nodeId": 22, "model": "BE468", "label": "Back Door Lock", "capabilities": ["schedules"],
+    "connectivityStatus": "online", "batteryLevel": 55, "locked": True,
     "config": {"beeper": False, "vacationMode": True, "lockAndLeave": True, "autoLock": False, "pinLength": 6},
     "diagnostics": {"electronicTransitionCount": 3, "mechanicalTransitionCount": 0, "electronicFailedCount": 0,
                     "electronicHighPreloadTransitionCount": 0, "occupiedSlots": [], "bootloaderVersion": 2},
-    "scheduleSlots": {"weekDay": 4, "yearDay": 4},
+    "scheduleSlots": {"weekday": 4, "yearDay": 4, "dailyRepeating": 0},
 }
 PANEL = {"mode": "armed_away", "pendingDelayEndsAt": None, "disarmedZoneIds": []}
 
@@ -514,7 +519,8 @@ class LockClient:
     async def update_config(self, session, host, port, token, node_id, update, *, secure=False):
         self._record("update_config", node_id, dict(update))
         lock = next(lk for lk in self.service.locks if lk["nodeId"] == node_id)
-        lock["config"] = {**lock["config"], **update}
+        key = "settings" if "settings" in lock else "config"
+        lock[key] = {**lock[key], **update}
         return copy.deepcopy(lock)
 
     async def get_schedules(self, session, host, port, token, node_id, user_id, *, secure=False):
@@ -527,8 +533,8 @@ class LockClient:
     async def clear_schedule(self, session, host, port, token, node_id, user_id, kind, slot, *, secure=False):
         self._record("clear_schedule", node_id, user_id, kind, slot)
 
-    async def set_enabled(self, session, host, port, token, node_id, enabled, user_id=None, *, secure=False):
-        self._record("set_enabled", node_id, enabled, user_id)
+    async def set_enabled(self, session, host, port, token, node_id, user_id, enabled, *, secure=False):
+        self._record("set_enabled", node_id, user_id, enabled)
 
 
 @pytest.fixture
@@ -613,7 +619,7 @@ async def test_switch_writes_the_parameter_and_updates_at_once(hass: HomeAssista
 
     assert lock_client.calls == [
         ("update_config", 21, {"beeper": False}),
-        ("update_config", 21, {"localControlsEnabled": True}),
+        ("update_config", 21, {"localControls": True}),
         ("update_config", 22, {"beeper": True}),
     ]
     assert hass.states.get("switch.front_door_lock_beeper").state == "off"
@@ -680,7 +686,7 @@ async def test_lock_changed_updates_entities_and_discovers_new_locks(hass: HomeA
     await _settle(hass, service)
 
     changed = {**BE469, "batteryLevel": 9, "connectivityStatus": "offline",
-               "config": {**BE469["config"], "vacationMode": True}, "diagnostics": {**BE469["diagnostics"], "occupiedSlots": [4]}}
+               "settings": {**BE469["settings"], "vacationMode": True}, "diagnostics": {**BE469["diagnostics"], "occupiedUserSlots": [4]}}
     await _push(hass, service, {"type": "lock.changed", "lock": changed})
     assert hass.states.get("sensor.front_door_lock_battery").state == "9"
     assert hass.states.get("binary_sensor.front_door_lock_connectivity").state == "off"
@@ -726,11 +732,11 @@ async def test_set_lock_schedule_sends_validated_fields_to_each_lock(hass, servi
 
     assert lock_client.calls == [
         ("set_schedule", 21, 3, "weekday", 2, {"weekday": "monday", "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}),
-        ("set_schedule", 21, 3, "yearday", 1, {
+        ("set_schedule", 21, 3, "yearDay", 1, {
             "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
             "stopYear": 2026, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
         }),
-        ("set_schedule", 21, 4, "daily_repeating", 1, {
+        ("set_schedule", 21, 4, "dailyRepeating", 1, {
             "weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30,
         }),
     ]
@@ -773,13 +779,13 @@ async def test_schedule_services_need_a_lock_target(hass, service, setup, lock_c
 
     with pytest.raises(ServiceValidationError, match="No Z-Wave Alarm lock"):
         await hass.services.async_call(
-            DOMAIN, "set_lock_schedules_enabled", {"device_id": _device(hass, entry, entry.entry_id).id, "enabled": True}, blocking=True
+            DOMAIN, "set_lock_schedules_enabled", {"device_id": _device(hass, entry, entry.entry_id).id, "user_id": 1, "enabled": True}, blocking=True
         )
     assert lock_client.calls == []
 
 
 @pytest.mark.parametrize("data", [
-    {"user_id": 0}, {"user_id": 256}, {"slot": 0}, {"schedule_type": "hourly"}, {"weekday": "someday"}, {"start_time": "25:00:00"},
+    {"user_id": 0}, {"user_id": 31}, {"slot": 0}, {"schedule_type": "hourly"}, {"weekday": "someday"}, {"start_time": "25:00:00"},
 ])
 async def test_set_lock_schedule_rejects_bad_data(hass, service, setup, lock_client, data) -> None:
     entry = await setup()
@@ -801,12 +807,12 @@ async def test_clear_lock_schedule_and_enable_disable(hass, service, setup, lock
         DOMAIN, "clear_lock_schedule", {"device_id": device_id, "user_id": 3, "slot": 2, "schedule_type": "yearday"}, blocking=True
     )
     await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": False, "user_id": 3}, blocking=True)
-    await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": True}, blocking=True)
+    await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": True, "user_id": 4}, blocking=True)
 
     assert lock_client.calls == [
-        ("clear_schedule", 21, 3, "yearday", 2),
-        ("set_enabled", 21, False, 3),
-        ("set_enabled", 21, True, None),
+        ("clear_schedule", 21, 3, "yearDay", 2),
+        ("set_enabled", 21, 3, False),
+        ("set_enabled", 21, 4, True),
     ]
 
 

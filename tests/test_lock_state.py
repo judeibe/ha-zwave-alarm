@@ -7,6 +7,7 @@ import voluptuous as vol
 
 from custom_components.zwave_alarm.coordinator_state import StreamState, apply_event
 from custom_components.zwave_alarm.lock_state import (
+    normalise_lock,
     decode_occupied_slots,
     lock_battery_level,
     lock_has_alarm_config,
@@ -177,3 +178,42 @@ def test_schedule_from_service_reports_missing_and_invalid_input() -> None:
         schedule_from_service("daily_repeating", {"weekdays": ["monday"], "start_time": time(8, 0), "duration": timedelta(days=1)})
     with pytest.raises(vol.Invalid):
         schedule_from_service("nonsense", {})
+
+
+def test_normalise_lock_reads_the_services_spelling() -> None:
+    lock = normalise_lock({
+        "nodeId": 5, "model": "BE469", "supportedSettings": ["beeper", "alarmMode"],
+        "settings": {"beeper": True, "localControls": False},
+        "diagnostics": {"occupiedUserSlots": [3, 1]}, "scheduleSlots": {"weekDay": 7},
+    })
+    assert lock["config"] == {"beeper": True, "localControls": False}
+    assert lock_has_alarm_config(lock)
+    assert occupied_slots(lock) == [1, 3]
+    assert schedule_slot_count(lock, "weekday") == 7
+
+
+def test_normalise_lock_reads_the_clients_spelling() -> None:
+    lock = normalise_lock({
+        "nodeId": 5, "model": "BE469", "capabilities": ["schedules", "alarm"],
+        "config": {"localControlsEnabled": True}, "diagnostics": {"occupiedSlots": [2]}, "scheduleSlots": {"weekday": 4},
+    })
+    assert lock["config"] == {"localControls": True}
+    assert lock["capabilities"] == ["schedules", "alarm_config"]
+    assert occupied_slots(lock) == [2]
+    assert schedule_slot_count(lock, "weekday") == 4
+
+
+def test_normalise_lock_gates_alarm_settings_on_what_the_lock_lists() -> None:
+    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE468", "supportedSettings": ["beeper"]}))
+    # an explicit list wins over the model, so a BE469 that doesn't list alarm settings gets none
+    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE469", "supportedSettings": ["beeper"]}))
+    assert not lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE468", "capabilities": ["schedules"]}))
+    assert lock_has_alarm_config(normalise_lock({"nodeId": 1, "model": "BE469"}))  # nothing else to go on
+
+
+def test_normalise_lock_tolerates_sparse_input_and_keeps_originals() -> None:
+    lock = normalise_lock({"nodeId": 9, "settings": None})
+    assert lock["config"] == {} and lock["diagnostics"] == {} and lock["scheduleSlots"] == {}
+    original = {"nodeId": 9, "settings": {"beeper": True}}
+    assert normalise_lock(original)["settings"] == {"beeper": True}
+    assert "config" not in original

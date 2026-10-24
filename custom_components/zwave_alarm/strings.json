@@ -238,19 +238,19 @@
     },
     "set_lock_schedules_enabled": {
       "name": "Enable or disable lock schedules",
-      "description": "Turns schedule enforcement on or off for one user, or for every user when no user is given.",
+      "description": "Turns schedule enforcement on or off for one user.",
       "fields": {
         "device_id": {
           "name": "Locks",
           "description": "The Schlage lock devices to apply this to."
         },
+        "user_id": {
+          "name": "User",
+          "description": "The lock user (code slot) whose schedules to enable or disable."
+        },
         "enabled": {
           "name": "Enabled",
           "description": "Whether schedules are enforced."
-        },
-        "user_id": {
-          "name": "User",
-          "description": "Limit the change to this user; omit it to apply to every user."
         }
       }
     },

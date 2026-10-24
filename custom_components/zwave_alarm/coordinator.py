@@ -41,6 +41,7 @@ from .coordinator_state import (
     security_event_payload,
 )
 from .keypad_state import keypad_event_payload
+from .lock_state import normalise_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             "setting",
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
-        self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": lock}))
+        self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": normalise_lock(lock)}))
 
     async def async_get_lock_schedules(self, node_id: int, user_id: int) -> dict[str, Any]:
         return await self._call_client(
@@ -161,10 +162,10 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             "schedule",
         )
 
-    async def async_set_lock_schedules_enabled(self, node_id: int, enabled: bool, user_id: int | None = None) -> None:
+    async def async_set_lock_schedules_enabled(self, node_id: int, user_id: int, enabled: bool) -> None:
         await self._call_client(
             api.async_set_lock_schedules_enabled(
-                self._session, self._host, self._port, None, node_id, enabled, user_id, secure=self._secure
+                self._session, self._host, self._port, None, node_id, user_id, enabled, secure=self._secure
             ),
             "schedule setting",
         )
@@ -212,6 +213,10 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
     async def _handle_event(self, event: dict[str, Any]) -> None:
         """Fold one server->client event into `self.data`, forwarding security events to listeners."""
+        if event["type"] == "snapshot" and event.get("locks"):
+            event = {**event, "locks": [normalise_lock(lock) for lock in event["locks"]]}
+        elif event["type"] == "lock.changed":
+            event = {**event, "lock": normalise_lock(event["lock"])}
         if event["type"] == "event.recorded":
             event_type, attributes = security_event_payload(event)
             for listener in list(self._event_listeners):
