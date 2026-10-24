@@ -156,3 +156,55 @@ def validate_schedule(kind: str, fields: dict[str, Any]) -> dict[str, Any]:
     elif schedule["durationHour"] == 0 and schedule["durationMinute"] == 0:
         raise vol.Invalid("The duration must be longer than zero")
     return schedule
+
+
+# `scheduleSlots` key per schedule kind (the Schedule Entry Lock `getNumSlots` result).
+SLOT_COUNT_KEYS = {"weekday": "weekDay", "yearday": "yearDay", "daily_repeating": "dailyRepeating"}
+
+
+def schedule_slot_count(lock: dict[str, Any], kind: str) -> int | None:
+    """How many slots per user the lock offers for `kind`; `None` when the lock hasn't reported it."""
+    slots = lock.get("scheduleSlots")
+    count = slots.get(SLOT_COUNT_KEYS[kind]) if isinstance(slots, dict) else None
+    return count if isinstance(count, int) and not isinstance(count, bool) else None
+
+
+def schedule_from_service(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Turn the schedule service's friendly inputs into Schedule Entry Lock fields (then validate them).
+
+    `start_time`/`end_time` are `datetime.time`, `start`/`end` are `datetime.datetime` and `duration` is a
+    `datetime.timedelta`, as coerced by the service schema; a missing input raises `vol.Invalid`.
+    """
+
+    def need(*keys: str) -> list[Any]:
+        missing = [key for key in keys if data.get(key) is None]
+        if missing:
+            raise vol.Invalid(f"A {kind} schedule needs: {', '.join(missing)}")
+        return [data[key] for key in keys]
+
+    if kind == "weekday":
+        weekday, start, end = need("weekday", "start_time", "end_time")
+        fields = {
+            "weekday": weekday,
+            "startHour": start.hour, "startMinute": start.minute,
+            "stopHour": end.hour, "stopMinute": end.minute,
+        }
+    elif kind == "yearday":
+        start, end = need("start", "end")
+        fields = {
+            "startYear": start.year, "startMonth": start.month, "startDay": start.day,
+            "startHour": start.hour, "startMinute": start.minute,
+            "stopYear": end.year, "stopMonth": end.month, "stopDay": end.day,
+            "stopHour": end.hour, "stopMinute": end.minute,
+        }
+    elif kind == "daily_repeating":
+        weekdays, start, duration = need("weekdays", "start_time", "duration")
+        minutes = int(duration.total_seconds() // 60)
+        fields = {
+            "weekdays": list(weekdays),
+            "startHour": start.hour, "startMinute": start.minute,
+            "durationHour": minutes // 60, "durationMinute": minutes % 60,
+        }
+    else:
+        raise vol.Invalid(f"Unknown schedule type {kind!r}")
+    return validate_schedule(kind, fields)

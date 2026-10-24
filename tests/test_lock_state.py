@@ -1,5 +1,7 @@
 """Pure Schlage lock logic: state folding, option mapping, slot decoding and schedule validation."""
 
+from datetime import datetime, time, timedelta
+
 import pytest
 import voluptuous as vol
 
@@ -11,6 +13,8 @@ from custom_components.zwave_alarm.lock_state import (
     occupied_slot_count,
     occupied_slots,
     pin_length_valid,
+    schedule_from_service,
+    schedule_slot_count,
     sensitivity_option,
     alarm_mode_option,
     validate_schedule,
@@ -142,3 +146,34 @@ def test_schedule_rejects_missing_unknown_and_foreign_fields() -> None:
         validate_schedule("weekday", {"weekday": "monday", "startHour": 1, "startMinute": 0, "stopHour": 2, "stopMinute": 0, "weekdays": []})
     with pytest.raises(vol.Invalid):
         validate_schedule("hourly", {})
+
+
+def test_schedule_slot_count_reads_per_kind_counts() -> None:
+    lock = {"scheduleSlots": {"weekDay": 7, "yearDay": 4, "dailyRepeating": 0}}
+    assert [schedule_slot_count(lock, k) for k in ("weekday", "yearday", "daily_repeating")] == [7, 4, 0]
+    assert schedule_slot_count({"scheduleSlots": {"weekDay": 7}}, "daily_repeating") is None
+    assert schedule_slot_count({}, "weekday") is None
+
+
+def test_schedule_from_service_builds_each_kind() -> None:
+    assert schedule_from_service("weekday", {"weekday": "friday", "start_time": time(8, 15), "end_time": time(17, 0)}) == {
+        "weekday": "friday", "startHour": 8, "startMinute": 15, "stopHour": 17, "stopMinute": 0,
+    }
+    assert schedule_from_service("yearday", {"start": datetime(2026, 1, 2, 9, 30), "end": datetime(2026, 2, 3, 18, 45)}) == {
+        "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 9, "startMinute": 30,
+        "stopYear": 2026, "stopMonth": 2, "stopDay": 3, "stopHour": 18, "stopMinute": 45,
+    }
+    assert schedule_from_service(
+        "daily_repeating", {"weekdays": ["monday", "friday"], "start_time": time(8, 0), "duration": timedelta(hours=9, minutes=30)}
+    ) == {"weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30}
+
+
+def test_schedule_from_service_reports_missing_and_invalid_input() -> None:
+    with pytest.raises(vol.Invalid, match="end_time"):
+        schedule_from_service("weekday", {"weekday": "friday", "start_time": time(8, 0)})
+    with pytest.raises(vol.Invalid, match="start"):
+        schedule_from_service("weekday", {"weekday": "friday", "start_time": time(18, 0), "end_time": time(8, 0)})
+    with pytest.raises(vol.Invalid):  # a day or more doesn't fit the hour field
+        schedule_from_service("daily_repeating", {"weekdays": ["monday"], "start_time": time(8, 0), "duration": timedelta(days=1)})
+    with pytest.raises(vol.Invalid):
+        schedule_from_service("nonsense", {})

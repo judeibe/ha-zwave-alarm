@@ -705,3 +705,132 @@ async def test_lock_entities_unavailable_while_disconnected(hass: HomeAssistant,
         "sensor.front_door_lock_battery", "binary_sensor.front_door_lock_connectivity",
     ):
         assert hass.states.get(entity_id).state == "unavailable"
+
+
+async def test_set_lock_schedule_sends_validated_fields_to_each_lock(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "set_lock_schedule", {
+        "device_id": _lock_device_id(hass, entry), "user_id": 3, "slot": 2, "schedule_type": "weekday",
+        "weekday": "monday", "start_time": "08:00:00", "end_time": "17:30:00",
+    }, blocking=True)
+    await hass.services.async_call(DOMAIN, "set_lock_schedule", {
+        "device_id": [_lock_device_id(hass, entry)], "user_id": 3, "slot": 1, "schedule_type": "yearday",
+        "start": "2026-01-02 00:00:00", "end": "2026-01-09 23:59:00",
+    }, blocking=True)
+    await hass.services.async_call(DOMAIN, "set_lock_schedule", {
+        "device_id": _lock_device_id(hass, entry), "user_id": 4, "slot": 1, "schedule_type": "daily_repeating",
+        "weekdays": ["monday", "friday"], "start_time": "08:00:00", "duration": "09:30:00",
+    }, blocking=True)
+
+    assert lock_client.calls == [
+        ("set_schedule", 21, 3, "weekday", 2, {"weekday": "monday", "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 30}),
+        ("set_schedule", 21, 3, "yearday", 1, {
+            "startYear": 2026, "startMonth": 1, "startDay": 2, "startHour": 0, "startMinute": 0,
+            "stopYear": 2026, "stopMonth": 1, "stopDay": 9, "stopHour": 23, "stopMinute": 59,
+        }),
+        ("set_schedule", 21, 4, "daily_repeating", 1, {
+            "weekdays": ["monday", "friday"], "startHour": 8, "startMinute": 0, "durationHour": 9, "durationMinute": 30,
+        }),
+    ]
+
+
+@pytest.mark.parametrize(("extra", "message"), [
+    ({"end_time": "07:00:00"}, "Invalid schedule"),  # stop before start
+    ({"slot": 8}, "slot 8 does not exist"),  # the lock has 7 weekday slots
+    ({"schedule_type": "daily_repeating", "weekdays": ["monday"], "duration": "01:00:00"}, "does not support"),  # BE468 has none
+])
+async def test_set_lock_schedule_rejects_bad_requests(hass, service, setup, lock_client, extra, message) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    data = {
+        "device_id": _lock_device_id(hass, entry, 22), "user_id": 3, "slot": 2, "schedule_type": "weekday",
+        "weekday": "monday", "start_time": "08:00:00", "end_time": "17:30:00",
+    }
+    data["device_id"] = _lock_device_id(hass, entry, 22 if "weekdays" in extra else 21)
+
+    with pytest.raises(ServiceValidationError, match=message):
+        await hass.services.async_call(DOMAIN, "set_lock_schedule", {**data, **extra}, blocking=True)
+    assert lock_client.calls == []
+
+
+async def test_set_lock_schedule_validates_every_target_before_writing(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match="slot 6 does not exist"):  # BE469 has 7 slots, BE468 only 4
+        await hass.services.async_call(DOMAIN, "set_lock_schedule", {
+            "device_id": [_lock_device_id(hass, entry, 21), _lock_device_id(hass, entry, 22)], "user_id": 1, "slot": 6,
+            "schedule_type": "weekday", "weekday": "monday", "start_time": "08:00:00", "end_time": "09:00:00",
+        }, blocking=True)
+    assert lock_client.calls == []
+
+
+async def test_schedule_services_need_a_lock_target(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match="No Z-Wave Alarm lock"):
+        await hass.services.async_call(
+            DOMAIN, "set_lock_schedules_enabled", {"device_id": _device(hass, entry, entry.entry_id).id, "enabled": True}, blocking=True
+        )
+    assert lock_client.calls == []
+
+
+@pytest.mark.parametrize("data", [
+    {"user_id": 0}, {"user_id": 256}, {"slot": 0}, {"schedule_type": "hourly"}, {"weekday": "someday"}, {"start_time": "25:00:00"},
+])
+async def test_set_lock_schedule_rejects_bad_data(hass, service, setup, lock_client, data) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    base = {"device_id": _lock_device_id(hass, entry), "user_id": 1, "slot": 1, "schedule_type": "weekday",
+            "weekday": "monday", "start_time": "08:00:00", "end_time": "09:00:00"}
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(DOMAIN, "set_lock_schedule", {**base, **data}, blocking=True)
+    assert lock_client.calls == []
+
+
+async def test_clear_lock_schedule_and_enable_disable(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    device_id = _lock_device_id(hass, entry)
+
+    await hass.services.async_call(
+        DOMAIN, "clear_lock_schedule", {"device_id": device_id, "user_id": 3, "slot": 2, "schedule_type": "yearday"}, blocking=True
+    )
+    await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": False, "user_id": 3}, blocking=True)
+    await hass.services.async_call(DOMAIN, "set_lock_schedules_enabled", {"device_id": device_id, "enabled": True}, blocking=True)
+
+    assert lock_client.calls == [
+        ("clear_schedule", 21, 3, "yearday", 2),
+        ("set_enabled", 21, False, 3),
+        ("set_enabled", 21, True, None),
+    ]
+
+
+async def test_get_lock_schedules_returns_the_locks_data(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    lock_client.schedules = {"enabled": True, "weekDay": [{"slot": 1, "weekday": "monday"}], "yearDay": [], "dailyRepeating": []}
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_lock_schedules", {"device_id": _lock_device_id(hass, entry), "user_id": 3}, blocking=True, return_response=True
+    )
+
+    assert response == {"Front Door Lock": lock_client.schedules}
+    assert lock_client.calls == [("get_schedules", 21, 3)]
+
+
+async def test_schedule_service_maps_client_errors(hass, service, setup, lock_client) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    data = {"device_id": _lock_device_id(hass, entry), "user_id": 3, "slot": 1, "schedule_type": "weekday"}
+
+    lock_client.error = api.BadRequest("slot is occupied")
+    with pytest.raises(ServiceValidationError, match="slot is occupied"):
+        await hass.services.async_call(DOMAIN, "clear_lock_schedule", data, blocking=True)
+    lock_client.error = api.CannotConnect()
+    with pytest.raises(HomeAssistantError, match="Could not reach"):
+        await hass.services.async_call(DOMAIN, "clear_lock_schedule", data, blocking=True)

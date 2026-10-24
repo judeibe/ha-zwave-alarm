@@ -163,6 +163,110 @@
           "description": "Playback volume from 0 to 99. The keypad's own volume is used when omitted."
         }
       }
+    },
+    "set_lock_schedule": {
+      "name": "Set lock schedule",
+      "description": "Sets one Schedule Entry Lock schedule for a user. The user can only unlock the lock inside the schedule.",
+      "fields": {
+        "device_id": {
+          "name": "Locks",
+          "description": "The Schlage lock devices to apply this to."
+        },
+        "user_id": {
+          "name": "User",
+          "description": "The lock user (code slot) the schedule belongs to."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "The schedule slot to write; each user has a limited number per schedule type."
+        },
+        "schedule_type": {
+          "name": "Schedule type",
+          "description": "Weekday: one day of the week every week. Year day: one date range. Daily repeating: the same time window on chosen weekdays."
+        },
+        "weekday": {
+          "name": "Weekday",
+          "description": "Day of the week (weekday schedules)."
+        },
+        "weekdays": {
+          "name": "Weekdays",
+          "description": "Days of the week the window repeats on (daily repeating schedules)."
+        },
+        "start_time": {
+          "name": "Start time",
+          "description": "When access begins (weekday and daily repeating schedules)."
+        },
+        "end_time": {
+          "name": "End time",
+          "description": "When access ends; must be after the start time (weekday schedules)."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When access begins (year day schedules)."
+        },
+        "end": {
+          "name": "End",
+          "description": "When access ends; must be after the start (year day schedules)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long access lasts after the start time, under 24 hours (daily repeating schedules)."
+        }
+      }
+    },
+    "clear_lock_schedule": {
+      "name": "Clear lock schedule",
+      "description": "Removes one Schedule Entry Lock schedule from a user.",
+      "fields": {
+        "device_id": {
+          "name": "Locks",
+          "description": "The Schlage lock devices to apply this to."
+        },
+        "user_id": {
+          "name": "User",
+          "description": "The lock user (code slot) the schedule belongs to."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "The schedule slot to clear."
+        },
+        "schedule_type": {
+          "name": "Schedule type",
+          "description": "The kind of schedule the slot holds."
+        }
+      }
+    },
+    "set_lock_schedules_enabled": {
+      "name": "Enable or disable lock schedules",
+      "description": "Turns schedule enforcement on or off for one user, or for every user when no user is given.",
+      "fields": {
+        "device_id": {
+          "name": "Locks",
+          "description": "The Schlage lock devices to apply this to."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether schedules are enforced."
+        },
+        "user_id": {
+          "name": "User",
+          "description": "Limit the change to this user; omit it to apply to every user."
+        }
+      }
+    },
+    "get_lock_schedules": {
+      "name": "Get lock schedules",
+      "description": "Returns the schedules stored on the lock for a user.",
+      "fields": {
+        "device_id": {
+          "name": "Locks",
+          "description": "The Schlage lock devices to apply this to."
+        },
+        "user_id": {
+          "name": "User",
+          "description": "The lock user (code slot) the schedule belongs to."
+        }
+      }
     }
   },
   "selector": {
@@ -173,6 +277,24 @@
         "wind_chimes": "Wind chimes",
         "bing_bong": "Bing bong",
         "doorbell": "Doorbell"
+      }
+    },
+    "schedule_type": {
+      "options": {
+        "weekday": "Weekday",
+        "yearday": "Year day",
+        "daily_repeating": "Daily repeating"
+      }
+    },
+    "weekday": {
+      "options": {
+        "sunday": "Sunday",
+        "monday": "Monday",
+        "tuesday": "Tuesday",
+        "wednesday": "Wednesday",
+        "thursday": "Thursday",
+        "friday": "Friday",
+        "saturday": "Saturday"
       }
     }
   },
@@ -185,6 +307,18 @@
     },
     "chime_sound_unsupported": {
       "message": "{keypad} does not support the sound {sound}."
+    },
+    "lock_not_found": {
+      "message": "No Z-Wave Alarm lock matches the selected target."
+    },
+    "schedule_unsupported": {
+      "message": "{lock} does not support {kind} schedules."
+    },
+    "schedule_slot_out_of_range": {
+      "message": "{lock} has {slots} slots for this schedule type; slot {slot} does not exist."
+    },
+    "schedule_invalid": {
+      "message": "Invalid schedule: {error}"
     }
   },
   "options": {
