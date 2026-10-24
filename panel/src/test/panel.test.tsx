@@ -5,10 +5,10 @@ import { ApiError } from "../api";
 import { ApiContext } from "../context";
 import { createTestRouter } from "../routes";
 import type { Overview } from "../types";
-import { fakeApi, OVERVIEW } from "./fixtures";
+import { fakeApi, OVERVIEW, WITH_LOCKS } from "./fixtures";
 
-function setup(path = "/", fail: Record<string, string> = {}, overview: Overview = OVERVIEW) {
-  const { api, call } = fakeApi(overview, fail);
+function setup(path = "/", fail: Record<string, string> = {}, overview: Overview = OVERVIEW, results: Record<string, unknown> = {}) {
+  const { api, call } = fakeApi(overview, fail, results);
   const router = createTestRouter(api, path);
   render(
     <ApiContext.Provider value={api}>
@@ -288,5 +288,102 @@ describe("keypads", () => {
     setup("/keypads", {}, { ...OVERVIEW, keypad_settings: null });
     expect(await screen.findByText(/Keypad settings are not available yet/)).toBeInTheDocument();
     expect(screen.queryByRole("switch")).toBeNull();
+  });
+});
+
+describe("locks", () => {
+  const users = [{ userId: 1, status: "enabled" }, { userId: 2, status: "available" }];
+  const slots = { user_id: 1, kinds: { weekDay: [{ slot_id: 1, schedule: null }, { slot_id: 2, schedule: null }], dailyRepeating: [{ slot_id: 1, schedule: null }] } };
+
+  it("lists enrolled locks and offers paired ones for enrolment, without listing them as devices", async () => {
+    const { call, user } = setup("/locks", {}, WITH_LOCKS);
+    expect(await screen.findByText("Front door lock")).toBeInTheDocument();
+    expect(screen.getByText("Paired, not added")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /lock/i }).some((l) => l.textContent?.includes("Garage lock"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("lock/enroll", { node_id: 9 }));
+  });
+
+  it("says so when no lock is enrolled", async () => {
+    setup("/locks");
+    expect(await screen.findByText("No locks in the alarm system")).toBeInTheDocument();
+  });
+
+  it("sets a user code with the lock's PIN length", async () => {
+    const { call, user } = setup("/locks/5", {}, WITH_LOCKS, { "lock/users": users, "lock/schedules": slots });
+    await user.click((await screen.findAllByRole("button", { name: "Set" }))[0]!);
+    const input = await screen.findByLabelText("Code for user 2");
+    await user.type(input, "123");
+    expect(screen.getByRole("button", { name: "Save code" })).toBeDisabled();
+    await user.type(input, "4");
+    await user.click(screen.getByRole("button", { name: "Save code" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("lock/user/set_code", { node_id: 5, user_id: 2, code: "1234" }));
+  });
+
+  it("only offers the schedule kinds the lock supports", async () => {
+    setup("/locks/5", {}, WITH_LOCKS, { "lock/users": users, "lock/schedules": slots });
+    expect(await screen.findByText("Weekly 1")).toBeInTheDocument();
+    expect(screen.getByText("Daily repeating 1")).toBeInTheDocument();
+    expect(screen.queryByText(/Date range/)).not.toBeInTheDocument();
+  });
+
+  it("saves a weekly schedule", async () => {
+    const { call, user } = setup("/locks/5", {}, WITH_LOCKS, { "lock/users": users, "lock/schedules": slots });
+    await screen.findByText("Weekly 1");
+    await user.click(within(await sheet()).getAllByRole("button", { name: "Add" })[0]!);
+    await user.click(await screen.findByRole("button", { name: "Save schedule" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("lock/schedule/set", {
+        node_id: 5, user_id: 1, kind: "weekDay", slot_id: 1,
+        schedule: { weekday: 1, startHour: 8, startMinute: 0, stopHour: 17, stopMinute: 0 },
+      }),
+    );
+  });
+
+  it("removes a lock from the alarm after confirmation", async () => {
+    const { call, user } = setup("/locks/5", {}, WITH_LOCKS, { "lock/users": users, "lock/schedules": slots });
+    await user.click(await screen.findByRole("button", { name: "Remove from alarm" }));
+    await user.click(confirmDialog().getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("lock/unenroll", { node_id: 5 }));
+  });
+
+  it("tells the user when the lock could not be cleared on removal", async () => {
+    const reply = { node_id: 5, cleared: false, failures: ["user code 3: lock did not answer"] };
+    const { user } = setup("/locks/5", {}, WITH_LOCKS, { "lock/users": users, "lock/schedules": slots, "lock/unenroll": reply });
+    await user.click(await screen.findByRole("button", { name: "Remove from alarm" }));
+    await user.click(confirmDialog().getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText(/could not be cleared: user code 3: lock did not answer/)).toBeInTheDocument();
+  });
+
+  it("says a schedule kind is not reported yet instead of offering it", async () => {
+    const lock = WITH_LOCKS.locks[0]!;
+    const pending = { ...lock, capabilities: { ...lock.capabilities, schedules: { weekDay: true, yearDay: null, dailyRepeating: false } } };
+    setup("/locks/5", {}, { ...WITH_LOCKS, locks: [pending] }, { "lock/users": users, "lock/schedules": slots });
+    expect(await screen.findByText("Weekly 1")).toBeInTheDocument();
+    expect(screen.getByText(/Date range schedules: not reported by the lock yet/)).toBeInTheDocument();
+    expect(screen.queryByText("Daily repeating 1")).not.toBeInTheDocument();
+  });
+
+  it("will not add a paired lock that was included without security", async () => {
+    const insecure = { nodeId: 9, model: "BE468", label: "Garage lock", connectivityStatus: "online" as const, secure: false };
+    setup("/locks", {}, { ...WITH_LOCKS, discoverable_locks: [insecure] });
+    expect(await screen.findByText(/Not securely included/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+  });
+
+  it("hides codes and schedules, and explains why, for an enrolled lock without S0/S2", async () => {
+    const lock = WITH_LOCKS.locks[0]!;
+    const insecure = { ...lock, capabilities: { ...lock.capabilities, secure: false } };
+    setup("/locks/5", {}, { ...WITH_LOCKS, locks: [insecure] });
+    expect(await screen.findByText(/included without S0\/S2/)).toBeInTheDocument();
+    expect(screen.queryByText("Users and codes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Access schedules")).not.toBeInTheDocument();
+  });
+
+  it("hides user codes and schedules on a lock that has neither", async () => {
+    const bare = { ...WITH_LOCKS.locks[0]!, capabilities: { ...WITH_LOCKS.locks[0]!.capabilities, userCodes: false, schedules: { weekDay: false, yearDay: false, dailyRepeating: false } } };
+    setup("/locks/5", {}, { ...WITH_LOCKS, locks: [bare] });
+    expect(await screen.findByText("This lock does not support user codes.")).toBeInTheDocument();
+    expect(screen.getByText("This lock does not support access schedules.")).toBeInTheDocument();
   });
 });

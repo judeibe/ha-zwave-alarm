@@ -950,3 +950,68 @@ async def test_no_keypad_pin_switch_when_the_service_has_no_keypad_settings(hass
     await setup()
     await _settle(hass, service)
     assert hass.states.get(SWITCH) is None
+
+
+# --- Lock lifecycle: a device exists only while the service reports (enrolls) the lock -----------------------------------
+
+
+async def test_paired_locks_never_create_devices_or_entities(hass: HomeAssistant, service: FakeService, setup) -> None:
+    """Paired-but-not-enrolled locks are only in `GET /locks/available`; the snapshot carries none, so none exist in HA."""
+    service.locks = []
+    entry = await setup()
+    await _settle(hass, service)
+
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert not [st for st in hass.states.async_all() if "_lock_" in st.entity_id or "door_lock" in st.entity_id]
+
+
+async def test_enrolling_adds_and_unenrolling_removes_the_lock_device(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.locks = []
+    entry = await setup()
+    await _settle(hass, service)
+
+    await _push(hass, service, {"type": "lock.changed", "lock": copy.deepcopy(BE469)})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is not None
+    assert hass.states.get("sensor.front_door_lock_battery").state == "80"
+
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert hass.states.get("sensor.front_door_lock_battery") is None
+
+    await _push(hass, service, {"type": "lock.changed", "lock": copy.deepcopy(BE469)})  # re-enrol
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is not None
+    assert hass.states.get("sensor.front_door_lock_battery").state == "80"
+
+
+async def test_only_the_unenrolled_lock_loses_its_device(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    assert _device(hass, entry, f"{entry.entry_id}_lock_{BE468['nodeId']}") is not None
+
+
+async def test_stale_lock_device_is_pruned_on_the_first_snapshot(hass: HomeAssistant, service: FakeService, setup) -> None:
+    """A lock unenrolled while HA was down must not linger as a device."""
+    service.locks = []
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_HOST: "127.0.0.1", CONF_PORT: service.port, CONF_SSL: False}, version=2,
+        unique_id=f"127.0.0.1:{service.port}",
+    )
+    entry.add_to_hass(hass)
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, f"{entry.entry_id}_lock_21")}, name="Old lock"
+    )
+    await hass.config_entries.async_setup(entry.entry_id)
+    await _settle(hass, service)
+    assert _device(hass, entry, f"{entry.entry_id}_lock_21") is None
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_an_enrolled_lock_device_cannot_be_deleted_by_hand(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    from custom_components.zwave_alarm import async_remove_config_entry_device
+
+    entry = await setup()
+    await _settle(hass, service)
+    assert not await async_remove_config_entry_device(hass, entry, _device(hass, entry, f"{entry.entry_id}_lock_21"))
+    assert await async_remove_config_entry_device(hass, entry, _device(hass, entry, f"{entry.entry_id}_keypad_12"))

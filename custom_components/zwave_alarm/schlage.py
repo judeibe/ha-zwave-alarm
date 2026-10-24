@@ -1,6 +1,6 @@
 """Shared plumbing for the per-lock entities (Schlage BE469 / BE468).
 
-Each lock the service reports becomes its own Home Assistant device, with its
+Each lock the service reports (enrolled locks only) becomes its own Home Assistant device, with its
 configuration switches/selects/number and diagnostic sensors hung off it. Entities
 are created from the lock's `supportedSettings`, so the BE469-only parameters (alarm
 mode, sensitivities, local controls) never appear on a BE468.
@@ -12,7 +12,8 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -34,6 +35,44 @@ def lock_device_info(entry: ConfigEntry, lock: dict[str, Any]) -> DeviceInfo:
         manufacturer="Schlage",
         model=lock.get("model") or lock.get("adapterId"),
         via_device=(DOMAIN, entry.entry_id),
+    )
+
+
+def _is_lock_identifier(entry_id: str, identifier: tuple[str, str]) -> bool:
+    return identifier[0] == DOMAIN and identifier[1].startswith(f"{entry_id}_lock_")
+
+
+@callback
+def async_setup_lock_lifecycle(hass: HomeAssistant, entry: ConfigEntry, coordinator: ZwaveAlarmCoordinator) -> None:
+    """Remove the device (and so its entities) of every lock the service no longer reports.
+
+    The service reports enrolled locks only, and sends `lock.removed` on unenrol or when the node leaves the Z-Wave
+    network; the coordinator drops the lock from its data and this removes the device. It also prunes a lock device
+    left over from an unenrol that happened while Home Assistant was down. Nothing is removed before the first
+    snapshot (`coordinator.data is None`), and a dropped stream keeps the last data, so an outage can't wipe devices.
+    """
+
+    @callback
+    def _sync() -> None:
+        if coordinator.data is None:
+            return
+        enrolled = {lock_device_identifier(entry.entry_id, lock["nodeId"]) for lock in coordinator.data.locks}
+        registry = dr.async_get(hass)
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            lock_ids = {i for i in device.identifiers if _is_lock_identifier(entry.entry_id, i)}
+            if lock_ids and not lock_ids & enrolled:
+                registry.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+
+    _sync()
+    entry.async_on_unload(coordinator.async_add_listener(_sync))
+
+
+@callback
+def async_can_remove_lock_device(entry: ConfigEntry, coordinator: ZwaveAlarmCoordinator | None, device: dr.DeviceEntry) -> bool:
+    """Whether the user may delete `device` by hand: never a lock still enrolled (unenrol it from the panel instead)."""
+    enrolled = {lock["nodeId"] for lock in coordinator.data.locks} if coordinator and coordinator.data else set()
+    return not any(
+        _is_lock_identifier(entry.entry_id, i) and int(i[1].rsplit("_", 1)[1]) in enrolled for i in device.identifiers
     )
 
 

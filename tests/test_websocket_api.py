@@ -28,6 +28,13 @@ def _enable(enable_custom_integrations):
     """Let HA load custom_components/zwave_alarm."""
 
 
+@pytest.fixture(autouse=True)
+def _no_discoverable_locks():
+    """Overview also asks for paired-but-not-enrolled locks; default to none so no test reaches the network."""
+    with patch(f"{API}.async_list_discoverable_locks", AsyncMock(return_value=[])) as mock:
+        yield mock
+
+
 @pytest.fixture
 async def entry(hass):
     assert await async_setup_component(hass, DOMAIN, {})
@@ -308,3 +315,186 @@ def test_built_panel_bundle_is_shipped() -> None:
     assert bundle.stat().st_size > 10_000
     assert "customElements.define(" in bundle.read_text()
     assert PANEL_ELEMENT in bundle.read_text()
+
+
+# --- Locks ------------------------------------------------------------------
+
+def _lock(**changes):
+    lock = {
+        "nodeId": 5, "model": "BE469", "label": "Front Door",
+        "supportedSettings": ["beeper", "alarmMode"], "settings": {"pinLength": 4}, "userSlotCount": 30,
+        "scheduleSlots": {"weekDay": 7, "yearDay": 0, "dailyRepeating": 7},
+        "capabilities": {
+            "secure": True, "userCodes": True, "alarmSettings": True,
+            "schedules": {"weekDay": True, "yearDay": False, "dailyRepeating": True},
+        },
+    }
+    return {**lock, **changes}
+
+
+def _caps(**schedules):
+    """Capabilities for a secure lock with the given schedule flags (anything unnamed is `None`, not reported yet)."""
+    flags = {"weekDay": None, "yearDay": None, "dailyRepeating": None, **schedules}
+    return {"secure": True, "userCodes": True, "alarmSettings": False, "schedules": flags}
+
+
+@pytest.fixture
+def with_locks(hass, entry):
+    def _set(*locks):
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+            data=SimpleNamespace(panel={"mode": "disarmed"}, keypads=[], locks=list(locks))
+        )
+    yield _set
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+
+
+async def test_overview_lists_enrolled_locks_with_capabilities_and_offers_paired_ones(
+    hass, hass_ws_client, entry, with_locks, _no_discoverable_locks
+) -> None:
+    with_locks(_lock())
+    _no_discoverable_locks.return_value = [{"nodeId": 6, "model": "BE469", "label": "Paired", "connectivityStatus": "online", "secure": True}]
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert [lock["nodeId"] for lock in resp["result"]["locks"]] == [5]
+    caps = resp["result"]["locks"][0]["capabilities"]
+    assert caps["schedules"] == {"weekDay": True, "yearDay": False, "dailyRepeating": True} and caps["userSlots"] == 30
+    assert [lock["nodeId"] for lock in resp["result"]["discoverable_locks"]] == [6]
+
+
+async def test_overview_tolerates_a_service_without_lock_enrolment(hass, hass_ws_client, entry, with_locks, _no_discoverable_locks) -> None:
+    with_locks()
+    _no_discoverable_locks.side_effect = api.NotFound("no such route")
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["success"] and resp["result"]["discoverable_locks"] == []
+    assert resp["result"]["discoverable_locks_error"] is None
+
+
+async def test_lock_enroll_and_unenroll_call_the_service(hass, hass_ws_client, entry) -> None:
+    enroll = AsyncMock(return_value=_lock())
+    unenroll = AsyncMock(return_value={"nodeId": 5, "cleared": True, "failures": []})
+    with patch(f"{API}.async_enroll_lock", enroll), patch(f"{API}.async_unenroll_lock", unenroll):
+        client = await hass_ws_client(hass)
+        assert (await _send(client, "lock/enroll", node_id=5))["success"]
+        resp = await _send(client, "lock/unenroll", node_id=5)
+    assert resp["result"] == {"node_id": 5, "cleared": True, "failures": []}
+    assert enroll.await_args.args[-1] == 5 and unenroll.await_args.args[-1] == 5
+
+
+async def test_lock_unenroll_reports_when_the_lock_could_not_be_cleared(hass, hass_ws_client, entry) -> None:
+    failures = ["user code 3: lock did not answer"]
+    unenroll = AsyncMock(return_value={"nodeId": 5, "cleared": False, "failures": failures})
+    with patch(f"{API}.async_unenroll_lock", unenroll):
+        resp = await _send(await hass_ws_client(hass), "lock/unenroll", node_id=5)
+    assert resp["success"] and resp["result"] == {"node_id": 5, "cleared": False, "failures": failures}
+
+
+async def test_lock_unenroll_tolerates_a_client_that_returns_nothing(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_unenroll_lock", AsyncMock(return_value=None)):
+        resp = await _send(await hass_ws_client(hass), "lock/unenroll", node_id=5)
+    assert resp["result"] == {"node_id": 5, "cleared": None, "failures": []}
+
+
+async def test_lock_enroll_maps_a_lock_included_without_security(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_enroll_lock", AsyncMock(side_effect=api.LockNotSecure("no S2"))):
+        resp = await _send(await hass_ws_client(hass), "lock/enroll", node_id=5)
+    assert resp["error"]["code"] == "lock_not_secure"
+
+
+async def test_lock_codes_and_schedules_refuse_a_lock_known_to_be_insecure(hass, hass_ws_client, entry, with_locks) -> None:
+    insecure = _lock()
+    insecure["capabilities"] = {**insecure["capabilities"], "secure": False}
+    with_locks(insecure)
+    client = await hass_ws_client(hass)
+    assert (await _send(client, "lock/user/set_code", node_id=5, user_id=1, code="1234"))["error"]["code"] == "lock_not_secure"
+    assert (await _send(client, "lock/schedules", node_id=5, user_id=1))["error"]["code"] == "lock_not_secure"
+
+
+async def test_lock_commands_refuse_a_lock_that_is_not_enrolled(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock(nodeId=6))  # only node 6 is enrolled; 5 is merely paired
+    set_code = AsyncMock()
+    with patch(f"{API}.async_set_lock_user_code", set_code):
+        client = await hass_ws_client(hass)
+        for node_id in (5, 99):
+            resp = await _send(client, "lock/user/set_code", node_id=node_id, user_id=1, code="1234")
+            assert resp["error"]["code"] == "lock_not_enrolled"
+    set_code.assert_not_awaited()
+
+
+async def test_lock_set_code_checks_slots_and_passes_the_pin_length(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock(settings={"pinLength": 6}))
+    set_code = AsyncMock(return_value={"userId": 2, "status": "enabled"})
+    with patch(f"{API}.async_set_lock_user_code", set_code):
+        client = await hass_ws_client(hass)
+        ok = await _send(client, "lock/user/set_code", node_id=5, user_id=2, code="123456", status="enabled")
+        too_many = await _send(client, "lock/user/set_code", node_id=5, user_id=31, code="123456")
+    assert ok["success"] and (set_code.await_args.kwargs["status"], set_code.await_args.kwargs["pin_length"]) == ("enabled", 6)
+    assert too_many["error"]["code"] == "lock_unsupported"
+    assert set_code.await_count == 1
+
+
+async def test_lock_code_is_never_echoed_in_errors(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock())
+    resp = await _send(await hass_ws_client(hass), "lock/user/set_code", node_id=5, user_id=1, code="12")
+    assert resp["error"]["code"] == "invalid_code" and "12" not in resp["error"]["message"].replace("4 to 12", "")
+
+
+async def test_lock_schedule_commands_are_gated_by_capability(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock())  # BE469ZP-style: no year-day slots
+    setter = AsyncMock()
+    week = {"weekday": 1, "startHour": 8, "startMinute": 0, "stopHour": 17, "stopMinute": 0}
+    with patch(f"{API}.async_set_lock_schedule", setter):
+        client = await hass_ws_client(hass)
+        year = await _send(client, "lock/schedule/set", node_id=5, user_id=1, kind="yearDay", slot_id=1, schedule={})
+        past_end = await _send(client, "lock/schedule/set", node_id=5, user_id=1, kind="weekDay", slot_id=8, schedule=week)
+        ok = await _send(client, "lock/schedule/set", node_id=5, user_id=1, kind="weekDay", slot_id=7, schedule=week)
+    assert year["error"]["code"] == "lock_unsupported" and past_end["error"]["code"] == "lock_unsupported"
+    assert ok["success"] and setter.await_count == 1
+    assert setter.await_args.args[-4:] == (1, "weekDay", 7, week)
+
+
+async def test_lock_schedule_kind_not_reported_yet_is_not_writable(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock(capabilities=_caps(weekDay=True), scheduleSlots={"weekDay": 2}))
+    setter = AsyncMock()
+    with patch(f"{API}.async_set_lock_schedule", setter):
+        resp = await _send(await hass_ws_client(hass), "lock/schedule/set", node_id=5, user_id=1, kind="dailyRepeating", slot_id=1, schedule={})
+    assert resp["error"]["code"] == "lock_schedule_unknown"
+    setter.assert_not_awaited()
+
+
+async def test_lock_schedules_reads_only_supported_kinds_and_names_unreported_ones(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock(capabilities=_caps(weekDay=True, yearDay=False), scheduleSlots={"weekDay": 2, "yearDay": 0}))
+    get = AsyncMock(side_effect=lambda *a, **k: {"kind": a[-2], "userId": a[-3], "slotId": a[-1], "schedule": None})
+    with patch(f"{API}.async_get_lock_schedule", get):
+        resp = await _send(await hass_ws_client(hass), "lock/schedules", node_id=5, user_id=1)
+    assert resp["result"] == {
+        "user_id": 1, "unknown": ["dailyRepeating"],
+        "kinds": {"weekDay": [{"slot_id": 1, "schedule": None}, {"slot_id": 2, "schedule": None}]},
+    }
+    assert get.await_count == 2
+
+
+async def test_lock_without_schedules_rejects_schedule_reads(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock(capabilities=_caps(weekDay=False, yearDay=False, dailyRepeating=False)))
+    client = await hass_ws_client(hass)
+    assert (await _send(client, "lock/schedules", node_id=5, user_id=1))["error"]["code"] == "lock_unsupported"
+    assert (await _send(client, "lock/schedule/enabled", node_id=5, user_id=1, enabled=True))["error"]["code"] == "lock_unsupported"
+
+
+async def test_lock_settings_reject_unsupported_keys_and_map_unavailable(hass, hass_ws_client, entry, with_locks) -> None:
+    with_locks(_lock())
+    update = AsyncMock(side_effect=api.LockUnavailable("asleep"))
+    with patch(f"{API}.async_update_lock_settings", update):
+        client = await hass_ws_client(hass)
+        bad = await _send(client, "lock/settings", node_id=5, settings={"kickSensitivity": 3})
+        asleep = await _send(client, "lock/settings", node_id=5, settings={"beeper": True})
+    assert bad["error"]["code"] == "lock_unsupported"
+    assert asleep["error"]["code"] == "lock_unavailable"

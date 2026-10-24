@@ -21,7 +21,7 @@ def async_add_node_entities(
     collection: str,
     factory: Callable[[ZwaveAlarmCoordinator, ConfigEntry, dict[str, Any]], list[Entity]],
 ) -> None:
-    """Add `factory(coordinator, entry, node)` entities for every node in `StreamState.<collection>`, now and as new ones appear.
+    """Add `factory(coordinator, entry, node)` entities for every node in `StreamState.<collection>`, now and as new ones appear (a node that was removed and comes back is added again).
 
     Nodes arrive with the first `snapshot` (or a later `*.changed`), so entities are added the first time each node id shows up.
     """
@@ -31,7 +31,9 @@ def async_add_node_entities(
     def _add_new_nodes() -> None:
         if coordinator.data is None:
             return
-        new_nodes = [n for n in getattr(coordinator.data, collection) if n["nodeId"] not in known_node_ids]
+        nodes = getattr(coordinator.data, collection)
+        known_node_ids.intersection_update(n["nodeId"] for n in nodes)  # forget removed nodes so a re-added one gets entities again
+        new_nodes = [n for n in nodes if n["nodeId"] not in known_node_ids]
         known_node_ids.update(n["nodeId"] for n in new_nodes)
         async_add_entities([entity for node in new_nodes for entity in factory(coordinator, entry, node)])
 

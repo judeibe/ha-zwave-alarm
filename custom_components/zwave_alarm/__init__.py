@@ -39,7 +39,7 @@ from .lock_state import (
     schedule_slot_count,
 )
 from .panel import async_register_panel, async_remove_panel
-from .schlage import lock_device_identifier
+from .schlage import async_can_remove_lock_device, async_setup_lock_lifecycle, lock_device_identifier
 from .websocket_api import async_register_commands
 
 PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "number", "select", "sensor", "switch"]
@@ -243,10 +243,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_setup_lock_lifecycle(hass, entry, coordinator)  # lock devices exist only while the service reports the lock
     await async_register_panel(hass, show_in_sidebar=entry.options.get(CONF_SHOW_IN_SIDEBAR, True))
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
+
+
+async def async_remove_config_entry_device(hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry) -> bool:
+    """Let the user delete a stale lock device by hand, but never one that is still enrolled in the alarm system."""
+    return async_can_remove_lock_device(entry, hass.data.get(DOMAIN, {}).get(entry.entry_id), device)
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
