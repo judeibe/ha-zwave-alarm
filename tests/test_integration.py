@@ -1049,7 +1049,7 @@ async def test_lock_and_unlock_send_the_command_but_wait_for_the_pushed_state(ha
 
     await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
     assert locks.lock_calls == [("state", 21, {"locked": True})]
-    assert hass.states.get("lock.front_door_lock").state == "unlocked"  # the reply still showed the old state: not applied
+    assert hass.states.get("lock.front_door_lock").state == "locking"  # the reply still showed the old state: not applied
 
     await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": True}})
     assert hass.states.get("lock.front_door_lock").state == "locked"
@@ -1094,3 +1094,104 @@ async def test_schedule_services_refuse_kinds_the_lock_lacks_or_has_not_reported
     with pytest.raises(ServiceValidationError, match="has not reported its daily_repeating"):
         await hass.services.async_call(DOMAIN, "clear_lock_schedule", {**base, "schedule_type": "daily_repeating"}, blocking=True)
     assert locks.lock_calls == []
+
+
+# --- Pending states: locking / unlocking ------------------------------------------------------------------------------
+
+
+async def _entity_state(hass: HomeAssistant, entity_id: str = "lock.front_door_lock") -> str:
+    return hass.states.get(entity_id).state
+
+
+async def test_locking_shows_until_the_lock_reports_the_bolt_thrown(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"  # the reply still showed the old state: not taken as the new one
+
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": True}})
+    assert await _entity_state(hass) == "locked"
+
+
+async def test_unlocking_shows_until_the_lock_reports_the_bolt_retracted(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = True
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("lock", "unlock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "unlocking"
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": False}})
+    assert await _entity_state(hass) == "unlocked"
+
+
+async def test_an_unrelated_update_keeps_the_pending_state(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    await _push(hass, service, {"type": "lock.changed", "lock": {**locks.locks[0], "locked": False, "batteryLevel": 50}})
+    assert await _entity_state(hass) == "locking"
+
+
+async def test_a_jammed_bolt_falls_back_to_the_last_reported_state_after_the_timeout(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.zwave_alarm.lock import LOCK_PENDING_TIMEOUT
+
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LOCK_PENDING_TIMEOUT - 1))
+    await hass.async_block_till_done()
+    assert await _entity_state(hass) == "locking"  # not yet
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LOCK_PENDING_TIMEOUT + 1))
+    await hass.async_block_till_done()
+    assert await _entity_state(hass) == "unlocked"
+
+
+@pytest.mark.parametrize(("status", "expected"), [(502, HomeAssistantError), (404, ServiceValidationError)])
+async def test_a_failed_command_clears_the_pending_state(hass, service, setup, locks, status, expected) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    locks.lock_status = status
+    with pytest.raises(expected):
+        await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "unlocked"
+
+
+async def test_removal_during_a_pending_state_cancels_the_timer(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert await _entity_state(hass) == "locking"
+
+    await _push(hass, service, {"type": "lock.removed", "nodeId": 21})
+    assert hass.states.get("lock.front_door_lock") is None
+    await hass.async_block_till_done()  # a leftover timer would fail the test's lingering-timer check
+
+
+async def test_unloading_during_a_pending_state_cancels_the_timer(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = False
+    entry = await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_locking_an_already_locked_lock_does_not_stay_pending(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    locks.locks[0]["locked"] = True
+    await setup()
+    await _settle(hass, service)
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
+    assert locks.lock_calls == [("state", 21, {"locked": True})]
+    assert await _entity_state(hass) == "locked"
