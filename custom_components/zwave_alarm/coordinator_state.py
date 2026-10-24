@@ -43,6 +43,8 @@ class StreamState:
     keypads: list[dict[str, Any]] = field(default_factory=list)
     # LockSummary dicts (Schlage lock contract); the snapshot's `locks` is optional, so older services leave this empty.
     locks: list[dict[str, Any]] = field(default_factory=list)
+    # KeypadSettings dict (`requireCodeToArm`); the snapshot's `keypadSettings` is optional, so older services leave this unset.
+    keypad_settings: dict[str, Any] | None = None
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -81,7 +83,11 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             zones=event["zones"],
             keypads=event.get("keypads") or [],
             locks=event.get("locks") or [],
+            keypad_settings=event.get("keypadSettings"),
         )
+
+    if event_type == "keypad.settings":
+        return replace(state, keypad_settings=event["settings"])
 
     if event_type == "lock.changed":
         lock = event["lock"]

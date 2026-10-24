@@ -17,6 +17,8 @@ export const OVERVIEW: Overview = {
     { entity_id: "person.sam", name: "Sam", user_id: null },
   ],
   ha_users: [],
+  keypads: [{ nodeId: 12, adapterId: "ring-keypad-v2", label: "Ring Keypad v2", connectivityStatus: "online", batteryLevel: 87 }],
+  keypad_settings: { requireCodeToArm: false },
 };
 
 /** A fake `Api` whose commands are spies; `fail` makes a command reject with a websocket error code. */

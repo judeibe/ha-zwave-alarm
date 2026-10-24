@@ -164,6 +164,15 @@ def _panel_summary(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any] | 
     }
 
 
+def _keypads_summary(hass: HomeAssistant, entry: ConfigEntry) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """The keypads and keypad settings the coordinator last received; empty and `None` before a snapshot or on older services."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    data = coordinator.data if coordinator is not None else None
+    if data is None:
+        return [], None
+    return getattr(data, "keypads", []), getattr(data, "keypad_settings", None)
+
+
 def _fault_summary(zones: list[dict[str, Any]]) -> dict[str, int]:
     """Counts of faulted sensors overall and by reason, for the dashboard's health card."""
     faults = faulted_sensors(zones)
@@ -193,6 +202,7 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
     except api.ServiceUnavailable as err:
         discoverable, discoverable_error = [], {"code": "service_unavailable", "message": str(err)}
     faults = _fault_summary(zones)
+    keypads, keypad_settings = _keypads_summary(hass, call.entry)
     zones, discoverable = _with_ha_names(zones, discoverable, _zwave_device_names(hass))
     return {
         "panel": _panel_summary(hass, call.entry),
@@ -204,6 +214,8 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         "users": await call(api.async_list_users),
         "ha_people": _ha_people(hass),
         "ha_users": await _ha_users(hass),
+        "keypads": keypads,
+        "keypad_settings": keypad_settings,
     }
 
 
@@ -310,10 +322,19 @@ async def ws_user_clear_code(hass: HomeAssistant, call: _Call, msg: dict[str, An
     await call(api.async_clear_user_code, msg["user_id"])
 
 
+# --- Keypads ----------------------------------------------------------------
+
+
+@_command({vol.Required("type"): "zwave_alarm/keypad_settings/update", vol.Required("require_code_to_arm"): bool})
+async def ws_keypad_settings_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    return await call(api.async_update_keypad_settings, {"requireCodeToArm": msg["require_code_to_arm"]})
+
+
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
     ws_sensor_assign, ws_sensor_update, ws_sensor_unassign,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
+    ws_keypad_settings_update,
 )
 
 

@@ -10,6 +10,7 @@ const PATHS = {
   shield: "M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z",
   "shield-check": "M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6zM9 12l2 2 4-4",
   alert: "M12 9v4M12 17h.01M10.3 4 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z",
+  keypad: "M5 3h14v18H5zM9 7h.01M12 7h.01M15 7h.01M9 11h.01M12 11h.01M15 11h.01M9 15h.01M12 15h.01M15 15h.01",
   battery: "M2 8.5h16v7H2zM20 11v2",
 } as const;
 

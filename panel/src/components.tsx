@@ -112,6 +112,29 @@ export const Field = ({ label, children, className = "" }: { label: string; chil
   </label>
 );
 
+/** An on/off toggle. Wrap it in a label (or pass `aria-label`) for its accessible name. */
+export function Switch({ checked, onChange, disabled, ...props }: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative h-8 w-14 shrink-0 rounded-full transition-colors duration-150 disabled:opacity-40 ${FOCUS} ${checked ? "bg-accent dark:bg-accent-dark" : "bg-zinc-300 dark:bg-zinc-700"}`}
+      {...props}
+    >
+      <span className={`absolute top-1 left-1 size-6 rounded-full bg-white shadow transition-transform duration-150 ${checked ? "translate-x-6" : ""}`} />
+    </button>
+  );
+}
+
 export const CODE_RE = /^\d{4,12}$/;
 
 /** Write-only code field: a password input whose value is cleared by the owner after submit, never displayed. */

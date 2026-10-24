@@ -43,6 +43,18 @@ export interface HaPerson {
   name: string;
   user_id: string | null;
 }
+/** A keypad as the service reports it (live from the integration's coordinator). */
+export interface Keypad {
+  nodeId: number;
+  adapterId: string;
+  label: string;
+  connectivityStatus: "online" | "offline";
+  batteryLevel: number | null;
+}
+export interface KeypadSettings {
+  /** Arming from a keypad needs a valid user PIN; disarming always does. */
+  requireCodeToArm: boolean;
+}
 /** Live alarm state from the integration's coordinator; `state` uses HA's alarm_control_panel strings. */
 export interface PanelSummary {
   state: "disarmed" | "arming" | "armed_away" | "armed_home" | "pending" | "triggered" | null;
@@ -61,6 +73,9 @@ export interface Overview {
   users: AlarmUser[];
   ha_people: HaPerson[];
   ha_users: { id: string; name: string; is_admin: boolean }[];
+  keypads: Keypad[];
+  /** Null until the first snapshot, or when the service predates keypad settings. */
+  keypad_settings: KeypadSettings | null;
 }
 
 /** The slice of Home Assistant's `hass` object the panel uses. */

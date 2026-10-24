@@ -25,6 +25,14 @@ Each keypad the service discovers (for example a Ring Keypad v2) becomes its own
 | `binary_sensor.<keypad>_connectivity` | `on` while the keypad is online. |
 | `sensor.<keypad>_battery` | Battery percentage; `unknown` when the keypad doesn't report one. |
 
+One keypad-wide setting is a switch on the Z-Wave Alarm device (it appears once a keypad exists and needs a service with keypad settings):
+
+| Entity | Purpose |
+|---|---|
+| `switch.z_wave_alarm_keypad_requires_pin_to_arm` | On = arming from a keypad needs a valid user PIN (type the PIN, then press Arm Away or Arm Home). Off = the Arm buttons arm without one. Disarming always needs a PIN. Stored by the service, so it survives restarts, and kept live by the snapshot and `keypad.settings`. |
+
+PINs belong to people: set them on the panel's **People** page. The panel's **Keypads** page lists each keypad (online/offline, battery) and has the same PIN-to-arm toggle.
+
 The `zwave_alarm.keypad_chime` action plays a chime on the selected keypad devices with a `sound` and an optional `volume` from 0 to 99.
 
 ## Schlage locks (BE469 and BE468)
@@ -82,6 +90,7 @@ Administrators get a **Z-Wave Alarm** sidebar panel (also at `/zwave-alarm`; hid
 
 - add discovered Z-Wave devices as sensors and move or unassign them,
 - create, rename and delete zones,
+- see the keypads the service found and choose whether arming from them needs a PIN,
 - onboard Home Assistant `person` entities as alarm users and set, replace or clear their codes.
 
 The panel is a React app using React Router, built to a single ES module (`custom_components/zwave_alarm/frontend/zwave-alarm-panel.js`) that is **committed**, because HACS installs from the repo. Source is in `panel/`; after changing it run `npm ci && npm run check` there and commit the rebuilt bundle (CI fails if it is stale).

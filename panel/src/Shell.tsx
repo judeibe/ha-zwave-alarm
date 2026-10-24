@@ -13,6 +13,7 @@ const TABS: readonly [string, string, IconName][] = [
   ["sensors", "Sensors", "sensors"],
   ["zones", "Zones", "zones"],
   ["people", "People", "people"],
+  ["keypads", "Keypads", "keypad"],
 ];
 
 const ROOT = "za-root @container min-h-dvh bg-zinc-100 text-zinc-900 dark:bg-black dark:text-zinc-100";
@@ -49,7 +50,7 @@ export function Shell() {
             <div className="flex min-h-dvh flex-col @2xl:flex-row">
               <nav
                 aria-label="Sections"
-                className="sticky bottom-0 z-20 order-last grid grid-cols-4 border-t border-black/5 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl backdrop-saturate-150 @2xl:top-0 @2xl:order-first @2xl:h-dvh @2xl:w-56 @2xl:shrink-0 @2xl:grid-cols-1 @2xl:content-start @2xl:gap-1 @2xl:border-t-0 @2xl:border-r @2xl:p-3 dark:border-white/10 dark:bg-zinc-900/80"
+                className="sticky bottom-0 z-20 order-last grid grid-cols-5 border-t border-black/5 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl backdrop-saturate-150 @2xl:top-0 @2xl:order-first @2xl:h-dvh @2xl:w-56 @2xl:shrink-0 @2xl:grid-cols-1 @2xl:content-start @2xl:gap-1 @2xl:border-t-0 @2xl:border-r @2xl:p-3 dark:border-white/10 dark:bg-zinc-900/80"
               >
                 <p className="hidden px-3 pt-3 pb-4 text-[15px] font-semibold tracking-tight @2xl:block">Z-Wave Alarm</p>
                 {TABS.map(([to, label, icon]) => (

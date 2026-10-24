@@ -126,6 +126,15 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             "chime",
         )
 
+    async def async_update_keypad_settings(self, **changes: Any) -> None:
+        """Write keypad settings via `PATCH /api/v1/keypad-settings` and publish the returned settings at once."""
+        settings = await self._call_client(
+            api.async_update_keypad_settings(self._session, self._host, self._port, None, changes, secure=self._secure),
+            "setting",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "keypad.settings", "settings": settings}))
+
     async def async_update_lock_settings(self, node_id: int, **changes: Any) -> None:
         """Write lock settings via `PATCH /api/v1/locks/{nodeId}/settings` and publish the returned lock at once."""
         lock = await self._call_client(
