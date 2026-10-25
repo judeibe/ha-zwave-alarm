@@ -1352,3 +1352,19 @@ async def test_panel_changed_carries_timers_and_bypass_to_the_attributes(hass: H
 
     attrs = hass.states.get(ALARM).attributes
     assert (attrs["entry_ends_at"], attrs["exit_ends_at"], attrs["bypassed_device_ids"]) == (5000, None, ["s9"])
+
+
+async def test_a_keypad_missing_from_one_snapshot_does_not_get_its_entities_added_twice(
+    hass: HomeAssistant, service: FakeService, setup, caplog: pytest.LogCaptureFixture
+) -> None:
+    await setup()
+    await _settle(hass, service)
+    assert hass.states.get("binary_sensor.ring_keypad_v2_connectivity") is not None
+
+    # A snapshot sent before the service rediscovered its keypad (e.g. right after a restart) lists none; the keypad
+    # then comes back. Its entities were never removed, so they must not be added a second time.
+    await _push(hass, service, {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(service.zones), "keypads": []})
+    await _push(hass, service, {"type": "keypad.changed", "keypad": copy.deepcopy(KEYPAD)})
+
+    assert "does not generate unique IDs" not in caplog.text
+    assert hass.states.get("binary_sensor.ring_keypad_v2_connectivity").state == "on"
