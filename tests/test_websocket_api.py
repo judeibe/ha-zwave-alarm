@@ -542,3 +542,23 @@ async def test_lock_settings_reject_unsupported_keys_and_map_unavailable(hass, h
         asleep = await _send(client, "lock/settings", node_id=5, settings={"beeper": True})
     assert bad["error"]["code"] == "lock_unsupported"
     assert asleep["error"]["code"] == "lock_unavailable"
+
+
+async def test_arm_returns_the_faulted_sensors_instead_of_an_error(hass, hass_ws_client, entry) -> None:
+    faulted = [{"sensorId": "s1", "name": "Front door", "zoneId": "z1", "reason": "open"}]
+    with patch(f"{API}.async_arm", AsyncMock(side_effect=api.NeedsBypass("faulted", faulted))):
+        resp = await _send(await hass_ws_client(hass), "arm", mode="armed_away")
+    assert resp["success"]
+    assert resp["result"] == {"needs_bypass": faulted}
+
+
+async def test_arm_resends_with_bypass_and_the_app_source(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_arm", AsyncMock(return_value={"mode": "arming"})) as arm:
+        resp = await _send(await hass_ws_client(hass), "arm", mode="armed_home", bypass=["s1"])
+    assert resp["result"] == {"needs_bypass": []}
+    assert arm.await_args.args[-3:] == ("armed_home", ["s1"], "app")
+
+
+async def test_arm_rejects_disarmed_as_a_mode(hass, hass_ws_client, entry) -> None:
+    resp = await _send(await hass_ws_client(hass), "arm", mode="disarmed")
+    assert not resp["success"]

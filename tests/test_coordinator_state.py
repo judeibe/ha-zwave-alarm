@@ -60,6 +60,9 @@ def test_panel_changed_updates_mode_and_pending_delay() -> None:
         "pendingDelayEndsAt": None,
         "disarmedZoneIds": [],
         "triggeredBy": None,
+        "exitEndsAt": None,
+        "entryEndsAt": None,
+        "bypassedDeviceIds": [],
     }
 
 

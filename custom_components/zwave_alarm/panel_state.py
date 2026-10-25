@@ -47,4 +47,24 @@ def panel_attributes(panel: dict, zones: list[dict]) -> dict:
         "disarmed_zones": [names.get(zone_id, zone_id) for zone_id in panel.get("disarmedZoneIds") or []],
         "triggered_by_zone": names.get(triggered_by.get("zoneId"), triggered_by.get("zoneId")),
         "triggered_by_sensor_id": triggered_by.get("sensorId"),
+        "exit_ends_at": panel.get("exitEndsAt"),
+        "entry_ends_at": panel.get("entryEndsAt"),
+        "bypassed_device_ids": list(panel.get("bypassedDeviceIds") or []),
     }
+
+
+FAULT_REASONS = {
+    "open": "open",
+    "offline": "offline",
+    "tampered": "tampered",
+    "not_set_up": "not set up",
+    "updating": "updating",
+}
+
+
+def describe_faulted(faulted: list[dict]) -> str:
+    """`Front door (open), Garage (offline)`: the sensors an arm was refused for, as one readable line."""
+    return ", ".join(
+        f"{f.get('name') or f.get('sensorId')} ({FAULT_REASONS.get(f.get('reason'), f.get('reason') or 'faulted')})"
+        for f in faulted
+    )

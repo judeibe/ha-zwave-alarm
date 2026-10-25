@@ -425,3 +425,35 @@ describe("modes and placements", () => {
     expect(call).toHaveBeenCalledWith("sensor/update", { sensor_id: "s1", armed: { home: false } });
   });
 });
+
+describe("arming", () => {
+  const disarmed = { ...OVERVIEW, panel: { state: "disarmed" as const, armed_mode: null, pending_delay_ends_at: null } };
+  const faulted = { sensorId: "s1", name: "Front door", zoneId: "z1", reason: "open" };
+
+  it("arms straight away when nothing is faulted", async () => {
+    const { call, user } = setup("/", {}, disarmed, { arm: { needs_bypass: [] } });
+    await user.click(await screen.findByRole("button", { name: "Arm away" }));
+    expect(call).toHaveBeenCalledWith("arm", { mode: "armed_away" });
+  });
+
+  it("lists faulted sensors and arms again with them bypassed once confirmed", async () => {
+    const { call, user } = setup("/", {}, disarmed, { arm: { needs_bypass: [faulted] } });
+    await user.click(await screen.findByRole("button", { name: "Arm home" }));
+    expect(await screen.findByText(/Front door \(open\)/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Bypass and arm" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("arm", { mode: "armed_home", bypass: ["s1"] }));
+  });
+
+  it("does not arm when the person declines the bypass", async () => {
+    const { call, user } = setup("/", {}, disarmed, { arm: { needs_bypass: [faulted] } });
+    await user.click(await screen.findByRole("button", { name: "Arm home" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(call).not.toHaveBeenCalledWith("arm", expect.objectContaining({ bypass: expect.anything() }));
+  });
+
+  it("offers no arm buttons while armed", async () => {
+    setup("/");
+    await screen.findByText("Armed away");
+    expect(screen.queryByRole("button", { name: "Arm home" })).not.toBeInTheDocument();
+  });
+});

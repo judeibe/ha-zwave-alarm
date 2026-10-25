@@ -30,3 +30,22 @@ def test_maps_every_alarm_mode(mode: str, expected: str) -> None:
 def test_raises_on_unknown_mode() -> None:
     with pytest.raises(ValueError, match="unknown_mode"):
         map_panel_mode("unknown_mode")
+
+
+def test_describe_faulted_names_each_sensor_with_its_reason() -> None:
+    from panel_state import describe_faulted
+
+    faulted = [
+        {"sensorId": "a", "name": "Front door", "reason": "open"},
+        {"sensorId": "b", "name": "Garage", "reason": "not_set_up"},
+        {"sensorId": "c", "reason": "weird"},
+    ]
+    assert describe_faulted(faulted) == "Front door (open), Garage (not set up), c (weird)"
+
+
+def test_panel_attributes_include_timers_and_bypassed_devices() -> None:
+    from panel_state import panel_attributes
+
+    attrs = panel_attributes({"mode": "arming", "exitEndsAt": 10, "entryEndsAt": None, "bypassedDeviceIds": ["s1"]}, [])
+    assert (attrs["exit_ends_at"], attrs["entry_ends_at"], attrs["bypassed_device_ids"]) == (10, None, ["s1"])
+    assert panel_attributes({"mode": "disarmed"}, [])["bypassed_device_ids"] == []

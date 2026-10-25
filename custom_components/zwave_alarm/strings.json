@@ -290,6 +290,24 @@
           "description": "The kind of schedule to read."
         }
       }
+    },
+    "arm": {
+      "name": "Arm with bypass",
+      "description": "Arms the alarm, leaving the listed sensors out until the next disarm. A plain arm is refused while sensors are faulted; the error names them, and their ids go under Bypass.",
+      "fields": {
+        "mode": {
+          "name": "Mode",
+          "description": "Which armed mode to enter."
+        },
+        "bypass": {
+          "name": "Bypass",
+          "description": "Sensor ids to leave out of this arming session (the ids the refused arm listed). Cleared on disarm."
+        },
+        "source": {
+          "name": "Source",
+          "description": "What requested the arm. Lock, schedule and cellular-backup sources bypass faulted sensors automatically."
+        }
+      }
     }
   },
   "selector": {
@@ -318,6 +336,21 @@
         "thursday": "Thursday",
         "friday": "Friday",
         "saturday": "Saturday"
+      }
+    },
+    "arm_mode": {
+      "options": {
+        "armed_home": "Armed home",
+        "armed_away": "Armed away"
+      }
+    },
+    "arm_source": {
+      "options": {
+        "app": "App",
+        "keypad": "Keypad",
+        "lock": "Lock",
+        "schedule": "Schedule",
+        "alexa": "Alexa"
       }
     }
   },

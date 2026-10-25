@@ -202,3 +202,35 @@ get_lock_schedule:
             - yearday
             - daily_repeating
           translation_key: schedule_type
+arm:
+  target:
+    entity:
+      integration: zwave_alarm
+      domain: alarm_control_panel
+  fields:
+    mode:
+      required: true
+      example: armed_away
+      selector:
+        select:
+          options:
+            - armed_home
+            - armed_away
+          translation_key: arm_mode
+    bypass:
+      required: false
+      example: "[3f2a..., 91bc...]"
+      selector:
+        object:
+    source:
+      required: false
+      example: app
+      selector:
+        select:
+          options:
+            - app
+            - keypad
+            - lock
+            - schedule
+            - alexa
+          translation_key: arm_source
