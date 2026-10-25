@@ -14,6 +14,7 @@ WebSocket connection to `wss://<host>/api/v1/stream` and is stored in
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -27,6 +28,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.typing import ConfigType
 
 from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
@@ -55,6 +57,24 @@ KEYPAD_CHIME_SCHEMA = cv.make_entity_service_schema(
         vol.Required(ATTR_SOUND): cv.string,
         vol.Optional(ATTR_VOLUME): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
     }
+)
+
+SERVICE_SET_USER_CODE = "set_user_code"
+SERVICE_CLEAR_USER_CODE = "clear_user_code"
+SERVICE_SET_DURESS_CODE = "set_duress_code"
+SERVICE_CLEAR_DURESS_CODE = "clear_duress_code"
+SERVICE_CREATE_INSTALLER = "create_installer"
+ATTR_CODE = "code"
+ATTR_CONFIRM_CODE = "confirm_code"
+ATTR_NAME = "name"
+_FOUR_DIGITS = re.compile(r"^\d{4}$")
+# The code schemas are plain strings: a regex in the schema would echo a bad code in its error (and the log).
+SET_USER_CODE_SCHEMA = vol.Schema(
+    {vol.Required("user_id"): cv.string, vol.Required(ATTR_CODE): cv.string, vol.Optional(ATTR_CONFIRM_CODE): cv.string}
+)
+USER_ID_SCHEMA = vol.Schema({vol.Required("user_id"): cv.string})
+CREATE_INSTALLER_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_NAME): cv.string, vol.Required(ATTR_CODE): cv.string, vol.Optional(ATTR_CONFIRM_CODE): cv.string}
 )
 
 SERVICE_SET_LOCK_SCHEDULE = "set_lock_schedule"
@@ -204,7 +224,48 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             for coordinator, lock in targets
         }
 
+    def _only_coordinator() -> ZwaveAlarmCoordinator:
+        coordinators = _coordinators(hass)
+        if len(coordinators) != 1:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_single_entry")
+        return coordinators[0]
+
+    def _check_codes(call: ServiceCall) -> None:
+        # Never echo the value: a bad code is only ever described, not quoted.
+        for key in (ATTR_CODE, ATTR_CONFIRM_CODE):
+            if key in call.data and not _FOUR_DIGITS.match(call.data[key]):
+                raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_not_four_digits")
+
+    async def _set_user_code(call: ServiceCall) -> None:
+        _check_codes(call)
+        await _only_coordinator().async_set_user_code(call.data["user_id"], call.data[ATTR_CODE], call.data.get(ATTR_CONFIRM_CODE))
+
+    async def _clear_user_code(call: ServiceCall) -> None:
+        await _only_coordinator().async_clear_user_code(call.data["user_id"])
+
+    async def _set_duress_code(call: ServiceCall) -> None:
+        _check_codes(call)
+        await _only_coordinator().async_set_duress_code(call.data["user_id"], call.data[ATTR_CODE], call.data.get(ATTR_CONFIRM_CODE))
+
+    async def _clear_duress_code(call: ServiceCall) -> None:
+        await _only_coordinator().async_delete_duress_code(call.data["user_id"])
+
+    async def _create_installer(call: ServiceCall) -> dict[str, Any]:
+        _check_codes(call)
+        user = await _only_coordinator().async_create_installer(call.data[ATTR_NAME], call.data[ATTR_CODE], call.data.get(ATTR_CONFIRM_CODE))
+        # Never the code: the id to manage the user with, and when the 48 hours of access end.
+        return {"user_id": user["id"], "name": user["name"], "role": user["role"], "expires_at": user.get("guestExpiresAt")}
+
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    # Codes and users are administrator-only, like the panel's websocket commands.
+    async_register_admin_service(hass, DOMAIN, SERVICE_SET_USER_CODE, _set_user_code, SET_USER_CODE_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_USER_CODE, _clear_user_code, USER_ID_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_SET_DURESS_CODE, _set_duress_code, SET_USER_CODE_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_DURESS_CODE, _clear_duress_code, USER_ID_SCHEMA)
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_CREATE_INSTALLER, _create_installer, CREATE_INSTALLER_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(DOMAIN, SERVICE_SET_LOCK_SCHEDULE, _set_lock_schedule, schema=SET_LOCK_SCHEDULE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_CLEAR_LOCK_SCHEDULE, _clear_lock_schedule, schema=CLEAR_LOCK_SCHEDULE_SCHEMA)
     hass.services.async_register(

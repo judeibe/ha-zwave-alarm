@@ -38,3 +38,8 @@ export const updateSensor = (sensorId: string, changes: Partial<Sensor>): Patch 
 
 export const setModeDelays = (mode: ArmedModeKey, changes: Partial<ModeDelays>): Patch => (o) =>
   o.modes ? { ...o, modes: { ...o.modes, [mode]: { ...o.modes[mode], ...changes } } } : o;
+
+export const setDuressCode = (userId: string, hasDuressCode: boolean): Patch => (o) => ({
+  ...o,
+  users: o.users.map((u) => (u.id === userId ? { ...u, hasDuressCode } : u)),
+});

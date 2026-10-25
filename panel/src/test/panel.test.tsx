@@ -182,9 +182,10 @@ describe("people and codes", () => {
 
   it("sends a code when one is typed", async () => {
     const { call, user } = setup("/people/person.sam");
-    await user.type(await screen.findByLabelText("Code"), "123456");
+    await user.type(await screen.findByLabelText("Code"), "1234");
+    await user.type(await screen.findByLabelText("Confirm code"), "1234");
     await user.click(screen.getByRole("button", { name: "Onboard" }));
-    expect(call).toHaveBeenCalledWith("user/create", { name: "Sam", role: "member", ha_person_id: "person.sam", code: "123456" });
+    expect(call).toHaveBeenCalledWith("user/create", { name: "Sam", role: "member", ha_person_id: "person.sam", code: "1234", confirm_code: "1234" });
   });
 
   it("disables Onboard and Set code for a malformed code", async () => {
@@ -195,26 +196,33 @@ describe("people and codes", () => {
     const alex = setup("/people/person.alex");
     await alex.user.type(await screen.findByLabelText("Code"), "12");
     expect(screen.getByRole("button", { name: "Replace code" })).toBeDisabled();
+    await alex.user.clear(screen.getByLabelText("Code"));
+    await alex.user.type(screen.getByLabelText("Code"), "12345"); // five digits is too many for a person
+    await alex.user.type(screen.getByLabelText("Confirm code"), "12345");
+    expect(screen.getByRole("button", { name: "Replace code" })).toBeDisabled();
   });
 
   it("sets a code, then clears the field and never shows the code", async () => {
     const { call, user } = setup("/people/person.alex");
     const input = (await screen.findByLabelText("Code")) as HTMLInputElement;
     expect(input.type).toBe("password");
-    await user.type(input, "654321");
+    await user.type(input, "6543");
+    await user.type(screen.getByLabelText("Confirm code"), "6543");
     await user.click(screen.getByRole("button", { name: "Replace code" }));
-    expect(call).toHaveBeenCalledWith("user/set_code", { user_id: "u1", code: "654321" });
+    expect(call).toHaveBeenCalledWith("user/set_code", { user_id: "u1", code: "6543", confirm_code: "6543" });
     await waitFor(() => expect(input.value).toBe(""));
-    expect(document.body.textContent).not.toContain("654321");
+    expect((screen.getByLabelText("Confirm code") as HTMLInputElement).value).toBe("");
+    expect(document.body.textContent).not.toContain("6543");
   });
 
   it("keeps the typed code and shows code_in_use on conflict", async () => {
     const { user } = setup("/people/person.alex", { "user/set_code": "code_in_use" });
     const input = (await screen.findByLabelText("Code")) as HTMLInputElement;
-    await user.type(input, "654321");
+    await user.type(input, "6543");
+    await user.type(screen.getByLabelText("Confirm code"), "6543");
     await user.click(screen.getByRole("button", { name: "Replace code" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Another person already uses this code/);
-    expect(input.value).toBe("654321");
+    expect(input.value).toBe("6543");
   });
 
   it("clears a code and removes a user, each after confirming", async () => {
@@ -225,6 +233,59 @@ describe("people and codes", () => {
     await user.click(screen.getByRole("button", { name: "Remove" }));
     await user.click(confirmDialog().getByRole("button", { name: "Remove" }));
     expect(call).toHaveBeenCalledWith("user/delete", { user_id: "u1" });
+  });
+});
+
+describe("duress code and installers", () => {
+  const admin = { ...OVERVIEW, users: [{ id: "u1", name: "Alex", role: "administrator" as const, hasCode: true, hasDuressCode: false, haPersonId: "person.alex", haUserId: null }] };
+
+  it("only offers a duress code to an administrator who can have one", async () => {
+    setup("/people/person.alex"); // OVERVIEW's Alex is a member
+    await screen.findByLabelText("Code");
+    expect(screen.queryByLabelText("Duress code")).not.toBeInTheDocument();
+  });
+
+  it("sets a duress code with its confirmation and clears the fields", async () => {
+    const { call, user } = setup("/people/person.alex", {}, admin);
+    const input = (await screen.findByLabelText("Duress code")) as HTMLInputElement;
+    await user.type(input, "2468");
+    expect(screen.getByRole("button", { name: "Set duress code" })).toBeDisabled(); // not confirmed yet
+    await user.type(screen.getByLabelText("Confirm duress code"), "2468");
+    await user.click(screen.getByRole("button", { name: "Set duress code" }));
+    expect(call).toHaveBeenCalledWith("user/set_duress_code", { user_id: "u1", code: "2468", confirm_code: "2468" });
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(document.body.textContent).not.toContain("2468");
+  });
+
+  it("clears an existing duress code after confirming", async () => {
+    const withDuress = { ...admin, users: [{ ...admin.users[0]!, hasDuressCode: true }] };
+    const { call, user } = setup("/people/person.alex", {}, withDuress);
+    await user.click(await screen.findByRole("button", { name: "Clear duress code" }));
+    await user.click(confirmDialog().getByRole("button", { name: "Clear duress code" }));
+    expect(call).toHaveBeenCalledWith("user/clear_duress_code", { user_id: "u1" });
+  });
+
+  it("shows the duress code in the list and an installer's access expiry", async () => {
+    const listed = { ...admin, users: [{ id: "u2", name: "Pat", role: "installer" as const, hasCode: true, hasDuressCode: false, guestExpiresAt: 1700172800000, haPersonId: null, haUserId: null }, { id: "u3", name: "Root", role: "administrator" as const, hasCode: true, hasDuressCode: true, haPersonId: null, haUserId: null }] };
+    setup("/people", {}, listed);
+    expect(await screen.findByText(/installer · code set · Access ends/)).toBeInTheDocument();
+    expect(screen.getByText(/administrator · code set · duress code set/)).toBeInTheDocument();
+  });
+
+  it("onboards an installer and says it lasts 48 hours", async () => {
+    const { call, user } = setup("/people/person.sam");
+    await user.selectOptions(await screen.findByLabelText("Role"), "installer");
+    expect(screen.getByText(/48 hours/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Onboard" }));
+    expect(call).toHaveBeenCalledWith("user/create", { name: "Sam", role: "installer", ha_person_id: "person.sam" });
+  });
+
+  it("explains a full code list", async () => {
+    const { user } = setup("/people/person.alex", { "user/set_code": "code_limit" });
+    await user.type(await screen.findByLabelText("Code"), "6543");
+    await user.type(screen.getByLabelText("Confirm code"), "6543");
+    await user.click(screen.getByRole("button", { name: "Replace code" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/most codes it allows/);
   });
 });
 

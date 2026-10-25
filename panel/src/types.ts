@@ -1,6 +1,6 @@
 /** Shapes returned by the integration's `zwave_alarm/*` websocket commands (see websocket_api.py). */
 export type Category = "intrusion" | "life-safety";
-export type Role = "administrator" | "member" | "guest";
+export type Role = "administrator" | "member" | "guest" | "installer";
 
 export type Placement = "MAIN_DOOR" | "SECONDARY_DOOR" | "WINDOW" | "ENTRYWAY" | "ROOM" | "GLASS_BREAK";
 /** Entry and exit delay for one armed mode, whole seconds 0-180. */
@@ -75,6 +75,10 @@ export interface AlarmUser {
   name: string;
   role: Role;
   hasCode?: boolean;
+  /** An administrator's duress code; absent from a service older than 3.4.0. */
+  hasDuressCode?: boolean;
+  /** When a guest's or installer's access ends (epoch ms); an installer always has one (48 hours). */
+  guestExpiresAt?: number | null;
   haPersonId?: string | null;
   haUserId?: string | null;
 }

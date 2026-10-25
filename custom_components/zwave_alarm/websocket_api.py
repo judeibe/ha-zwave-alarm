@@ -31,7 +31,19 @@ _LOGGER = logging.getLogger(__name__)
 # logs it, which would leak (partial) codes. The schema therefore accepts any object.
 CODE_SCHEMA = object
 _CODE_RE = re.compile(r"^\d{4,12}$")
-ROLE_SCHEMA = vol.In(["administrator", "member", "guest"])
+ROLE_SCHEMA = vol.In(["administrator", "member", "guest", "installer"])
+# People's codes are exactly four digits (the service rejects anything else); lock codes keep their own 4-8 digit rule.
+_USER_CODE_RE = re.compile(r"^\d{4}$")
+
+
+class InvalidUserCode(api.BadRequest):
+    """A person's code that is not exactly four digits (never carries the code itself)."""
+
+
+def _check_user_codes(msg: dict[str, Any]) -> None:
+    for key in ("code", "confirm_code"):
+        if key in msg and not (isinstance(msg[key], str) and _USER_CODE_RE.match(msg[key])):
+            raise InvalidUserCode("A code must be exactly 4 digits.")
 CATEGORY_SCHEMA = vol.In(["intrusion", "life-safety"])
 
 class LockNotEnrolled(api.NotFound):
@@ -56,7 +68,9 @@ _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (api.ScheduleKindUnsupported, "schedule_kind_unsupported"),  # a BadRequest subclass: must precede it
     (api.ZoneNotEmpty, "zone_not_empty"),
     (api.ZoneInUse, "zone_in_use"),
+    (InvalidUserCode, "invalid_code"),  # a BadRequest subclass: must precede it
     (api.CodeInUse, "code_in_use"),
+    (api.CodeLimit, "code_limit"),
     (api.Conflict, "conflict"),
     (api.NotFound, "not_found"),
     (api.BadRequest, "invalid_request"),
@@ -461,15 +475,17 @@ async def ws_siren_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any])
 
 
 @_command({vol.Required("type"): "zwave_alarm/user/create", vol.Required("name"): vol.All(str, vol.Length(min=1)),
-           vol.Required("role"): ROLE_SCHEMA, vol.Optional("code"): CODE_SCHEMA,
+           vol.Required("role"): ROLE_SCHEMA, vol.Optional("code"): CODE_SCHEMA, vol.Optional("confirm_code"): CODE_SCHEMA,
            vol.Optional("ha_person_id"): vol.Any(str, None), vol.Optional("ha_user_id"): vol.Any(str, None),
            vol.Optional("guest_expires_at"): vol.Any(str, int, None), vol.Optional("guest_zone_id"): vol.Any(str, None)})
 async def ws_user_create(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    _check_user_codes(msg)
     return await call(
         api.async_create_user,
         msg["name"],
         msg["role"],
         msg.get("code"),
+        confirm_code=msg.get("confirm_code"),
         guest_expires_at=msg.get("guest_expires_at"),
         guest_zone_id=msg.get("guest_zone_id"),
         ha_person_id=msg.get("ha_person_id"),
@@ -498,14 +514,28 @@ async def ws_user_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) 
 
 
 @_command({vol.Required("type"): "zwave_alarm/user/set_code", vol.Required("user_id"): str,
-           vol.Required("code"): CODE_SCHEMA})
+           vol.Required("code"): CODE_SCHEMA, vol.Optional("confirm_code"): CODE_SCHEMA})
 async def ws_user_set_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
-    await call(api.async_set_user_code, msg["user_id"], msg["code"])
+    _check_user_codes(msg)
+    await call(api.async_set_user_code, msg["user_id"], msg["code"], msg.get("confirm_code"))
 
 
 @_command({vol.Required("type"): "zwave_alarm/user/clear_code", vol.Required("user_id"): str})
 async def ws_user_clear_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
     await call(api.async_clear_user_code, msg["user_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/user/set_duress_code", vol.Required("user_id"): str,
+           vol.Required("code"): CODE_SCHEMA, vol.Optional("confirm_code"): CODE_SCHEMA})
+async def ws_user_set_duress_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    """The duress code disarms visibly and silently asks for police. Only an administrator can have one."""
+    _check_user_codes(msg)
+    await call(api.async_set_duress_code, msg["user_id"], msg["code"], msg.get("confirm_code"))
+
+
+@_command({vol.Required("type"): "zwave_alarm/user/clear_duress_code", vol.Required("user_id"): str})
+async def ws_user_clear_duress_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    await call(api.async_delete_duress_code, msg["user_id"])
 
 
 # --- Keypads ----------------------------------------------------------------
@@ -636,7 +666,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
-    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence, ws_siren_put, ws_siren_delete,
+    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence, ws_siren_put, ws_siren_delete, ws_user_set_duress_code, ws_user_clear_duress_code,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,

@@ -381,6 +381,80 @@
           "description": "The node id of the siren."
         }
       }
+    },
+    "set_user_code": {
+      "name": "Set user code",
+      "description": "Sets or replaces a person's code. Administrators only. The code is sent to the service and never stored or logged by Home Assistant, but an automation or script that sends it keeps it in its own configuration and traces.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The alarm user's id, as shown in the Z-Wave Alarm panel."
+        },
+        "code": {
+          "name": "Code",
+          "description": "Exactly four digits, unique across the alarm."
+        },
+        "confirm_code": {
+          "name": "Confirm code",
+          "description": "The same code again. The service rejects the request when they differ."
+        }
+      }
+    },
+    "clear_user_code": {
+      "name": "Clear user code",
+      "description": "Removes a person's code, so they can no longer arm or disarm with one. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The alarm user's id, as shown in the Z-Wave Alarm panel."
+        }
+      }
+    },
+    "set_duress_code": {
+      "name": "Set duress code",
+      "description": "Sets an administrator's duress code. Entering it on a keypad disarms visibly but raises a silent duress alarm. Only administrators can have one. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The alarm user's id, as shown in the Z-Wave Alarm panel."
+        },
+        "code": {
+          "name": "Code",
+          "description": "Exactly four digits, unique across the alarm."
+        },
+        "confirm_code": {
+          "name": "Confirm code",
+          "description": "The same code again. The service rejects the request when they differ."
+        }
+      }
+    },
+    "clear_duress_code": {
+      "name": "Clear duress code",
+      "description": "Removes an administrator's duress code. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The alarm user's id, as shown in the Z-Wave Alarm panel."
+        }
+      }
+    },
+    "create_installer": {
+      "name": "Create installer",
+      "description": "Creates an installer, who can arm and disarm for 48 hours and is then removed by the service. Returns the user id and when the access ends. Administrators only.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Who the installer is."
+        },
+        "code": {
+          "name": "Code",
+          "description": "Exactly four digits, unique across the alarm."
+        },
+        "confirm_code": {
+          "name": "Confirm code",
+          "description": "The same code again. The service rejects the request when they differ."
+        }
+      }
     }
   },
   "selector": {
@@ -473,6 +547,12 @@
     },
     "schedule_invalid": {
       "message": "Invalid schedule: {error}"
+    },
+    "no_single_entry": {
+      "message": "Codes can only be managed when exactly one Z-Wave Alarm service is set up."
+    },
+    "code_not_four_digits": {
+      "message": "A code must be exactly four digits."
     }
   },
   "options": {

@@ -108,6 +108,12 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError(f"The Z-Wave Alarm service could not find the target: {err}") from err
         except api.BadRequest as err:
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
+        except api.CodeInUse as err:  # Conflict subclasses: must precede the generic handler below
+            raise ServiceValidationError("Another person already uses that code. Choose a different one.") from err
+        except api.CodeLimit as err:
+            raise ServiceValidationError("The alarm already holds the most codes it allows (256, duress codes included).") from err
+        except api.TooManyRequests as err:
+            raise HomeAssistantError("The Z-Wave Alarm service is rate limiting requests. Try again shortly.") from err
         except api.InvalidAuth as err:
             raise HomeAssistantError("The Z-Wave Alarm service refused the request.") from err
         except api.LockUnavailable as err:  # a CannotConnect subclass, so it has to come first
@@ -179,6 +185,44 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "siren.removed", "nodeId": node_id}))
+
+    # Codes below are passed straight to the service and are never logged, stored or put in an error message: the
+    # client's errors carry the service's message, which never contains a code.
+
+    async def async_set_user_code(self, user_id: str, code: str, confirm_code: str | None) -> None:
+        """Set or replace a user's code via `PUT /api/v1/users/{id}/code`."""
+        await self._call_client(
+            api.async_set_user_code(self._session, self._host, self._port, None, user_id, code, confirm_code, secure=self._secure),
+            "code",
+        )
+
+    async def async_clear_user_code(self, user_id: str) -> None:
+        await self._call_client(
+            api.async_clear_user_code(self._session, self._host, self._port, None, user_id, secure=self._secure), "code"
+        )
+
+    async def async_set_duress_code(self, user_id: str, code: str, confirm_code: str | None) -> None:
+        """Set a user's duress code via `PUT /api/v1/users/{id}/duress-code` (the user must be an administrator)."""
+        await self._call_client(
+            api.async_set_duress_code(self._session, self._host, self._port, None, user_id, code, confirm_code, secure=self._secure),
+            "duress code",
+        )
+
+    async def async_delete_duress_code(self, user_id: str) -> None:
+        await self._call_client(
+            api.async_delete_duress_code(self._session, self._host, self._port, None, user_id, secure=self._secure),
+            "duress code",
+        )
+
+    async def async_create_installer(self, name: str, code: str, confirm_code: str | None) -> dict[str, Any]:
+        """Create an installer user; the service gives it 48 hours of access (`guestExpiresAt`)."""
+        return await self._call_client(
+            api.async_create_user(
+                self._session, self._host, self._port, None, name, "installer", code,
+                confirm_code=confirm_code, secure=self._secure,
+            ),
+            "user",
+        )
 
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
