@@ -1401,8 +1401,8 @@ BURGLARY_EVENT = {
     "id": "e1", "type": "BURGLARY", "service": None, "triggerDeviceId": "s1", "startedAt": 50, "sirenState": "sounding",
     "dispatchState": "held", "cancelledAt": None, "endedAt": None, "details": None,
 }
-EVENT_SENSOR = "sensor.z_wave_alarm_alarm_event"
-SIREN_SENSOR = "binary_sensor.z_wave_alarm_siren_sounding"
+EVENT_SENSOR = "sensor.zwave_alarm_alarm_event"
+SIREN_SENSOR = "binary_sensor.zwave_alarm_siren_sounding"
 
 
 async def test_alarm_event_entities_follow_the_snapshot_and_the_stream(hass: HomeAssistant, service: FakeService, setup) -> None:

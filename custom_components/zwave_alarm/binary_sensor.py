@@ -177,6 +177,8 @@ class ZwaveAlarmSirenSoundingSensor(CoordinatorEntity[ZwaveAlarmCoordinator], Bi
     def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_siren_sounding"
+        # Explicit, like the zone and fault-count entities, so the id does not depend on how HA slugs the device name.
+        self.entity_id = async_generate_entity_id(ENTITY_ID_FORMAT, "zwave_alarm_siren_sounding", hass=coordinator.hass)
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     @property
