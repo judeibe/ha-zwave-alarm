@@ -1,6 +1,5 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
-# 0.7.0 (lock enrollment) is not tagged or on PyPI yet: until it is, install ../zwave-alarm-client (branch feat/lock-enrollment) editable.
-zwave-alarm-client==0.7.0
+zwave-alarm-client==0.8.0
 home-assistant-frontend

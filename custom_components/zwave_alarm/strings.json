@@ -125,6 +125,18 @@
     "number": {
       "pin_length": {
         "name": "PIN length"
+      },
+      "home_entry_delay": {
+        "name": "Home entry delay"
+      },
+      "home_exit_delay": {
+        "name": "Home exit delay"
+      },
+      "away_entry_delay": {
+        "name": "Away entry delay"
+      },
+      "away_exit_delay": {
+        "name": "Away exit delay"
       }
     },
     "sensor": {

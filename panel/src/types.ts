@@ -2,6 +2,14 @@
 export type Category = "intrusion" | "life-safety";
 export type Role = "administrator" | "member" | "guest";
 
+export type Placement = "MAIN_DOOR" | "SECONDARY_DOOR" | "WINDOW" | "ENTRYWAY" | "ROOM" | "GLASS_BREAK";
+/** Entry and exit delay for one armed mode, whole seconds 0-180. */
+export interface ModeDelays {
+  entryDelaySec: number;
+  exitDelaySec: number;
+}
+export type ArmedModeKey = "armed_home" | "armed_away";
+export type Modes = Record<ArmedModeKey, ModeDelays>;
 export interface Sensor {
   id: string;
   zwaveNodeId: number;
@@ -11,6 +19,12 @@ export interface Sensor {
   currentState: "normal" | "breached";
   batteryLevel?: number | null;
   connectivityStatus?: "online" | "offline";
+  /** Null for life-safety sensors; absent on a service older than 3.0.0. */
+  placement?: Placement | null;
+  armedHome?: boolean;
+  armedAway?: boolean;
+  /** Notify only, never alarms. */
+  alertsOnly?: boolean;
   /** The Z-Wave device's name in Home Assistant (device registry); absent when HA doesn't know the node. */
   haName?: string;
 }
@@ -122,6 +136,8 @@ export interface Overview {
   keypads: Keypad[];
   /** Null until the first snapshot, or when the service predates keypad settings. */
   keypad_settings: KeypadSettings | null;
+  /** Null until the first snapshot, or when the service predates per-mode delays (3.0.0). */
+  modes: Modes | null;
   /** Enrolled locks only. */
   locks: Lock[];
   /** Paired to the Z-Wave controller but not enrolled: offered for enrolment, never shown as devices. */

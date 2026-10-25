@@ -230,3 +230,24 @@ def test_next_backoff_doubles_from_base_up_to_cap() -> None:
 def test_next_backoff_caps_at_max_delay() -> None:
     assert next_backoff(10) == RECONNECT_MAX_DELAY
     assert next_backoff(100) == RECONNECT_MAX_DELAY
+
+
+_MODES = {"armed_home": {"entryDelaySec": 60, "exitDelaySec": 60}, "armed_away": {"entryDelaySec": 45, "exitDelaySec": 30}}
+
+
+def test_snapshot_carries_per_mode_delays() -> None:
+    state = apply_event(StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": [], "modes": _MODES})
+    assert state.modes == _MODES
+
+
+def test_snapshot_from_an_older_service_leaves_modes_unset() -> None:
+    state = apply_event(StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []})
+    assert state.modes is None
+
+
+def test_panel_changed_updates_modes_and_keeps_them_when_absent() -> None:
+    start = StreamState(panel={"mode": "disarmed"}, zones=[], modes=_MODES)
+    changed = {"type": "panel.changed", "mode": "arming", "pendingDelayEndsAt": 1}
+    assert apply_event(start, changed).modes == _MODES
+    new_modes = {**_MODES, "armed_home": {"entryDelaySec": 10, "exitDelaySec": 20}}
+    assert apply_event(start, {**changed, "modes": new_modes}).modes == new_modes

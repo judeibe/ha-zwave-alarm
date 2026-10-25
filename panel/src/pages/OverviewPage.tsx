@@ -1,4 +1,9 @@
-import { Hint, Pill, SectionTitle } from "../components";
+import { useState } from "react";
+import { FIELD, Hint, Pill, SectionTitle } from "../components";
+import { useApi } from "../context";
+import { setModeDelays } from "../patches";
+import { useAction } from "../useAction";
+import type { ArmedModeKey, ModeDelays } from "../types";
 import { useOverview } from "../overview";
 import { Icon, type IconName } from "../ui/Icon";
 import { InsetList, ListRow } from "../ui/List";
@@ -62,6 +67,58 @@ export function OverviewPage() {
         </>
       )}
       {!zones.length && <Hint>No zones yet. Create one under Zones, then assign your Z-Wave sensors to it.</Hint>}
+      <ModeDelaysSection />
     </section>
+  );
+}
+
+const MODE_LABEL: Record<ArmedModeKey, string> = { armed_home: "Home", armed_away: "Away" };
+const DELAY_MAX = 180;
+
+function DelayField({ mode, field, label, value }: { mode: ArmedModeKey; field: keyof ModeDelays; label: string; value: number }) {
+  const api = useApi();
+  const { run, error } = useAction();
+  const [draft, setDraft] = useState(String(value));
+  const parsed = Number(draft);
+  const valid = draft.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= DELAY_MAX;
+  const save = () => {
+    if (valid && parsed !== value) run(() => api.call("modes/update", { [mode]: { [field]: parsed } }), { patch: setModeDelays(mode, { [field]: parsed }), done: "Delay saved" });
+  };
+  return (
+    <li className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+      <label htmlFor={`${mode}-${field}`} className="min-w-0 flex-1 text-[17px] leading-snug">
+        {label}
+        {error && <span className="block text-[15px] text-red-600 dark:text-red-400">{error}</span>}
+      </label>
+      <input
+        id={`${mode}-${field}`}
+        className={`${FIELD} w-24 text-right`}
+        inputMode="numeric"
+        aria-invalid={!valid}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+      <span className="text-[15px] text-zinc-500 dark:text-zinc-400">s</span>
+    </li>
+  );
+}
+
+/** Entry and exit delay per armed mode (0-180 s). One value per mode applies to every sensor placed on a door or entryway. */
+export function ModeDelaysSection() {
+  const { modes } = useOverview();
+  if (!modes) return null;
+  return (
+    <>
+      <SectionTitle>Entry and exit delays</SectionTitle>
+      {(Object.keys(MODE_LABEL) as ArmedModeKey[]).map((mode) => (
+        <InsetList key={mode} label={`${MODE_LABEL[mode]} delays`}>
+          <DelayField mode={mode} field="exitDelaySec" label={`${MODE_LABEL[mode]} exit delay`} value={modes[mode].exitDelaySec} />
+          <DelayField mode={mode} field="entryDelaySec" label={`${MODE_LABEL[mode]} entry delay`} value={modes[mode].entryDelaySec} />
+        </InsetList>
+      ))}
+      <Hint>0 to 180 seconds. At 0, door and entryway sensors alarm immediately.</Hint>
+    </>
   );
 }
