@@ -23,7 +23,7 @@ import zwave_alarm_client as api
 
 from .const import CONF_SSL, DOMAIN
 from .fault_state import faulted_sensors
-from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_schedule, schedule_fields
+from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_mode_schedule, check_schedule, normalize_time, schedule_fields
 from .panel_state import map_panel_mode
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (api.ZoneNotEmpty, "zone_not_empty"),
     (api.ZoneInUse, "zone_in_use"),
     (InvalidUserCode, "invalid_code"),  # a BadRequest subclass: must precede it
+    (api.ScheduleConflict, "schedule_conflict"),  # a Conflict subclass: must precede it
     (api.CodeInUse, "code_in_use"),
     (api.CodeLimit, "code_limit"),
     (api.Conflict, "conflict"),
@@ -216,6 +217,13 @@ def _modes(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, dict[str, int]]
     return getattr(data, "modes", None)
 
 
+def _mode_schedules(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
+    """The mode schedules the coordinator last received; empty before a snapshot or on a service older than 3.6.0."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    data = coordinator.data if coordinator is not None else None
+    return list(getattr(data, "mode_schedules", None) or [])
+
+
 def _sirens(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
     """The enrolled sirens the coordinator last received; empty before a snapshot or on a service older than 3.3.0."""
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -330,6 +338,7 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         "modes": _modes(hass, call.entry),
         "alarm_events": _alarm_events(hass, call.entry),
         "sirens": _sirens(hass, call.entry),
+        "mode_schedules": _mode_schedules(hass, call.entry),
         "locks": _lock_summaries(hass, call.entry),
         "discoverable_locks": available_locks,
         "discoverable_locks_error": available_locks_error,
@@ -604,6 +613,73 @@ async def ws_guest_schedule_delete(hass: HomeAssistant, call: _Call, msg: dict[s
     await call(api.async_delete_guest_schedule, msg["user_id"], msg["schedule_id"])
 
 
+# --- History and mode schedules ---------------------------------------------
+
+_EVENT_FILTERS = {
+    vol.Optional("event_type"): vol.Any(str, [str]),
+    vol.Optional("device_id"): str,
+    vol.Optional("user_id"): str,
+    vol.Optional("since"): vol.All(int, vol.Range(min=0)),
+    vol.Optional("until"): vol.All(int, vol.Range(min=0)),
+    vol.Optional("before"): str,
+    vol.Optional("limit"): vol.All(int, vol.Range(min=1, max=500)),
+}
+
+
+@_command({vol.Required("type"): "zwave_alarm/events", **_EVENT_FILTERS})
+async def ws_events(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """History, newest first. Filter by `event_type` (one or a list), `device_id`, `user_id`, `since`/`until` (epoch ms);
+    page with `before` (the id of the oldest event already shown)."""
+    filters = {k: msg[k] for k in ("device_id", "user_id", "since", "until", "before", "limit") if k in msg}
+    if "event_type" in msg:
+        filters["type"] = msg["event_type"]
+    return await call(api.async_get_events, **filters)
+
+
+MODE_SCHEMA = vol.In(["disarmed", "armed_home", "armed_away"])
+
+
+def _mode_schedule_fields(msg: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    fields = {k: msg[k] for k in keys if k in msg}
+    try:
+        check_mode_schedule(fields.get("mode"), fields.get("time"), fields.get("days"))
+        if "time" in fields:
+            fields["time"] = normalize_time(fields["time"])
+    except InvalidSchedule as err:
+        raise api.BadRequest(str(err)) from err
+    return fields
+
+
+@_command({vol.Required("type"): "zwave_alarm/mode_schedule/list"})
+async def ws_mode_schedule_list(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    return await call(api.async_get_mode_schedules)
+
+
+@_command({vol.Required("type"): "zwave_alarm/mode_schedule/create", vol.Required("name"): vol.All(str, vol.Length(min=1)),
+           vol.Required("mode"): MODE_SCHEMA, vol.Required("time"): _TIME, vol.Required("days"): [WEEKDAY_SCHEMA],
+           vol.Optional("enabled"): bool, vol.Optional("time_zone"): vol.Any(str, None)})
+async def ws_mode_schedule_create(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    f = _mode_schedule_fields(msg, ("name", "mode", "time", "days", "enabled", "time_zone"))
+    return await hass.data[DOMAIN][call.entry.entry_id].async_create_mode_schedule(
+        f["name"], f["mode"], f["time"], f["days"], f.get("enabled"), f.get("time_zone")
+    )
+
+
+@_command({vol.Required("type"): "zwave_alarm/mode_schedule/update", vol.Required("schedule_id"): str,
+           vol.Optional("name"): vol.All(str, vol.Length(min=1)), vol.Optional("mode"): MODE_SCHEMA, vol.Optional("time"): _TIME,
+           vol.Optional("days"): [WEEKDAY_SCHEMA], vol.Optional("enabled"): bool, vol.Optional("time_zone"): vol.Any(str, None)})
+async def ws_mode_schedule_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    fields = _mode_schedule_fields(msg, ("name", "mode", "time", "days", "enabled", "time_zone"))
+    if not fields:
+        raise api.BadRequest("Change at least one field.")
+    return await hass.data[DOMAIN][call.entry.entry_id].async_update_mode_schedule(msg["schedule_id"], **fields)
+
+
+@_command({vol.Required("type"): "zwave_alarm/mode_schedule/delete", vol.Required("schedule_id"): str})
+async def ws_mode_schedule_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    await hass.data[DOMAIN][call.entry.entry_id].async_delete_mode_schedule(msg["schedule_id"])
+
+
 # --- Keypads ----------------------------------------------------------------
 
 
@@ -733,6 +809,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
     ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence, ws_siren_put, ws_siren_delete, ws_user_set_duress_code, ws_user_clear_duress_code,
+    ws_events, ws_mode_schedule_list, ws_mode_schedule_create, ws_mode_schedule_update, ws_mode_schedule_delete,
     ws_guest_schedule_list, ws_guest_schedule_create, ws_guest_schedule_update, ws_guest_schedule_delete,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,

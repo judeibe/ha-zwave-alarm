@@ -108,6 +108,9 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError(f"The Z-Wave Alarm service could not find the target: {err}") from err
         except api.BadRequest as err:
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
+        except api.ScheduleConflict as err:  # a Conflict subclass: must precede the generic handler
+            other = f" ({err.conflicts_with})" if err.conflicts_with else ""
+            raise ServiceValidationError(f"Another enabled schedule{other} would run at the same time. Change the time or days, or turn the other off.") from err
         except api.CodeInUse as err:  # Conflict subclasses: must precede the generic handler below
             raise ServiceValidationError("Another person already uses that code. Choose a different one.") from err
         except api.CodeLimit as err:
@@ -253,6 +256,54 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             api.async_delete_guest_schedule(self._session, self._host, self._port, None, user_id, schedule_id, secure=self._secure),
             "schedule",
         )
+
+    async def async_get_events(self, **filters: Any) -> list[dict[str, Any]]:
+        """History via `GET /api/v1/events`; filters are the client's (type, device_id, user_id, since, until, before, limit)."""
+        return await self._call_client(
+            api.async_get_events(self._session, self._host, self._port, None, secure=self._secure, **filters), "history request"
+        )
+
+    async def async_get_mode_schedules(self) -> list[dict[str, Any]]:
+        return await self._call_client(
+            api.async_get_mode_schedules(self._session, self._host, self._port, None, secure=self._secure), "schedule request"
+        )
+
+    @callback
+    def _publish_mode_schedule(self, schedule: dict[str, Any]) -> None:
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "mode-schedule.changed", "schedule": schedule}))
+
+    async def async_create_mode_schedule(
+        self, name: str, mode: str, time: str, days: list[str], enabled: bool | None = None, time_zone: str | None = None
+    ) -> dict[str, Any]:
+        """Add a mode schedule; `time_zone` defaults to Home Assistant's, because the service runs in UTC."""
+        schedule = await self._call_client(
+            api.async_create_mode_schedule(
+                self._session, self._host, self._port, None, name, mode, time, days, enabled,
+                time_zone or self.hass.config.time_zone, secure=self._secure,
+            ),
+            "schedule",
+        )
+        self._publish_mode_schedule(schedule)
+        return schedule
+
+    async def async_update_mode_schedule(self, schedule_id: str, **fields: Any) -> dict[str, Any]:
+        schedule = await self._call_client(
+            api.async_update_mode_schedule(
+                self._session, self._host, self._port, None, schedule_id, secure=self._secure, **fields
+            ),
+            "schedule",
+        )
+        self._publish_mode_schedule(schedule)
+        return schedule
+
+    async def async_delete_mode_schedule(self, schedule_id: str) -> None:
+        await self._call_client(
+            api.async_delete_mode_schedule(self._session, self._host, self._port, None, schedule_id, secure=self._secure),
+            "schedule",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "mode-schedule.removed", "id": schedule_id}))
 
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""

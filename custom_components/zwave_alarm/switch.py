@@ -5,11 +5,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import ENTITY_ID_FORMAT, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -36,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     async_add_lock_entities(coordinator, entry, async_add_entities, _switches)
     _async_add_keypad_pin_switch(coordinator, entry, async_add_entities)
+    _async_add_mode_schedule_switches(coordinator, entry, async_add_entities)
 
 
 @callback
@@ -110,3 +111,76 @@ class ZwaveAlarmKeypadPinSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], Switch
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_update_keypad_settings(requireCodeToArm=False)
+
+
+@callback
+def _async_add_mode_schedule_switches(
+    coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """One switch per mode schedule (on = enabled), added the first time each schedule id shows up."""
+    known: set[str] = set()
+
+    @callback
+    def _add() -> None:
+        if coordinator.data is None:
+            return
+        new = [x for x in coordinator.data.mode_schedules if x["id"] not in known]
+        known.update(x["id"] for x in new)
+        async_add_entities(ZwaveAlarmModeScheduleSwitch(coordinator, entry, x) for x in new)
+
+    _add()
+    entry.async_on_unload(coordinator.async_add_listener(_add))
+
+
+class ZwaveAlarmModeScheduleSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], SwitchEntity):
+    """Turns a mode schedule on or off without deleting it. A deleted schedule's switch goes unavailable."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, schedule: dict[str, Any]) -> None:
+        super().__init__(coordinator)
+        self._schedule_id: str = schedule["id"]
+        self._attr_unique_id = f"{entry.entry_id}_mode_schedule_{self._schedule_id}"
+        self.entity_id = async_generate_entity_id(ENTITY_ID_FORMAT, f"zwave_alarm_schedule_{schedule['name']}", hass=coordinator.hass)
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    def _schedule(self) -> dict[str, Any] | None:
+        if self.coordinator.data is None:
+            return None
+        return next((x for x in self.coordinator.data.mode_schedules if x["id"] == self._schedule_id), None)
+
+    @property
+    def name(self) -> str | None:
+        schedule = self._schedule()
+        return f"Schedule {schedule['name']}" if schedule else None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._schedule() is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        schedule = self._schedule()
+        return schedule["enabled"] if schedule else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        schedule = self._schedule()
+        if not schedule:
+            return None
+        return {
+            "schedule_id": schedule["id"],
+            "mode": schedule["mode"],
+            "time": schedule["time"],
+            "days": schedule["days"],
+            "time_zone": schedule.get("timeZone"),
+            "last_run_at": schedule.get("lastRunAt"),
+        }
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_mode_schedule(self._schedule_id, enabled=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_mode_schedule(self._schedule_id, enabled=False)

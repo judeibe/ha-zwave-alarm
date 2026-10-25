@@ -15,6 +15,8 @@ const TABS: readonly [string, string, IconName][] = [
   ["people", "People", "people"],
   ["keypads", "Keypads", "keypad"],
   ["locks", "Locks", "locks"],
+  ["schedules", "Schedules", "schedule"],
+  ["history", "History", "history"],
 ];
 
 const ROOT = "za-root @container min-h-dvh bg-zinc-100 text-zinc-900 dark:bg-black dark:text-zinc-100";

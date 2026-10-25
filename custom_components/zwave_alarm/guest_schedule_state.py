@@ -55,3 +55,13 @@ def schedule_fields(data: dict[str, Any]) -> dict[str, Any]:
         if key in data:
             fields[key] = normalize_time(data[key])
     return fields
+
+
+def check_mode_schedule(mode: str | None, time: str | None, days: list[str] | None) -> None:
+    """Raise `InvalidSchedule` for a mode schedule the service would refuse; pass only what is being set."""
+    if mode is not None and mode not in ("disarmed", "armed_home", "armed_away"):
+        raise InvalidSchedule("The mode must be disarmed, armed_home or armed_away.")
+    if time is not None:
+        normalize_time(time)
+    if days is not None:
+        check_schedule(days, True, None, None)

@@ -84,6 +84,10 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.mode_schedule_calls: list[tuple] = []
+        self.mode_schedules: list[dict] | None = None  # the snapshot's `modeSchedules`; None leaves it out like an older service
+        self.mode_schedule_status = 200
+        self.event_queries: list[dict] = []
         self.schedule_calls: list[tuple] = []
         self.schedule_status = 200
         self.code_calls: list[tuple] = []
@@ -194,6 +198,30 @@ class FakeService:
             return web.Response(status=204)
         return web.json_response(schedule, status=201 if request.method == "POST" else 200)
 
+    async def mode_schedules_handler(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json() if request.can_read_body else {}
+        schedule_id = request.match_info.get("schedule_id")
+        self.mode_schedule_calls.append((request.method, schedule_id, body))
+        if self.mode_schedule_status == 409:
+            return web.json_response(
+                {"error": {"code": "schedule_conflict", "message": "Clashes.", "conflictsWith": "m-other"}}, status=409
+            )
+        schedule = {"id": schedule_id or "m-new", "name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon"],
+                    "enabled": True, "timeZone": None, "createdAt": 1, "lastRunAt": None, **body}
+        if request.method == "GET":
+            return web.json_response([schedule])
+        if request.method == "DELETE":
+            return web.Response(status=204)
+        return web.json_response(schedule, status=201 if request.method == "POST" else 200)
+
+    async def events_handler(self, request: web.Request) -> web.Response:
+        self._note(request)
+        self.event_queries.append(dict(request.query))
+        return web.json_response([{"id": "ev1", "type": "tamper", "source": "system", "sourceUserId": None, "relatedZoneId": None,
+                                   "relatedSensorId": None, "details": "Cover removed", "occurredAt": 5, "actor": None,
+                                   "deviceId": "s1", "deviceName": "Front door"}])
+
     async def arm(self, request: web.Request) -> web.Response:
         self._note(request)
         body = await request.json()
@@ -273,6 +301,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.mode_schedules is not None:
+            snapshot["modeSchedules"] = copy.deepcopy(self.mode_schedules)
         if self.sirens is not None:
             snapshot["sirens"] = copy.deepcopy(self.sirens)
         if self.alarm_events is not None:
@@ -316,6 +346,9 @@ async def service(socket_enabled):
     app.router.add_route("*", "/api/v1/users/{user_id}/duress-code", fake.user_code)
     app.router.add_route("*", "/api/v1/users/{user_id}/schedules", fake.user_schedules)
     app.router.add_route("*", "/api/v1/users/{user_id}/schedules/{schedule_id}", fake.user_schedules)
+    app.router.add_get("/api/v1/events", fake.events_handler)
+    app.router.add_route("*", "/api/v1/mode-schedules", fake.mode_schedules_handler)
+    app.router.add_route("*", "/api/v1/mode-schedules/{schedule_id}", fake.mode_schedules_handler)
     app.router.add_post("/api/v1/panel/arm", fake.arm)
     app.router.add_post("/api/v1/panel/panic", fake.panic)
     app.router.add_post("/api/v1/panel/silence", fake.silence)
@@ -1835,3 +1868,126 @@ async def test_guest_schedule_actions_are_administrator_only(hass: HomeAssistant
             DOMAIN, "list_guest_schedules", {"user_id": "g1"}, blocking=True, return_response=True,
             context=Context(user_id=hass_read_only_user.id),
         )
+
+
+NIGHT = {"id": "m1", "name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon", "tue"], "enabled": True,
+         "timeZone": "America/Chicago", "createdAt": 1, "lastRunAt": 99}
+NIGHT_SWITCH = "switch.zwave_alarm_schedule_night"
+
+
+async def test_mode_schedule_switch_follows_the_snapshot_and_shows_the_schedule(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.mode_schedules = [NIGHT]
+    await setup()
+    await _settle(hass, service)
+
+    state = await _entity(hass, NIGHT_SWITCH)
+    assert state.state == "on"
+    assert (state.attributes["mode"], state.attributes["time"], state.attributes["days"]) == ("armed_home", "22:00", ["mon", "tue"])
+    assert (state.attributes["time_zone"], state.attributes["last_run_at"]) == ("America/Chicago", 99)
+
+
+async def test_mode_schedule_switch_toggles_enabled_and_follows_the_stream(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.mode_schedules = [NIGHT]
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, NIGHT_SWITCH)
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": NIGHT_SWITCH}, blocking=True)
+    assert service.mode_schedule_calls == [("PATCH", "m1", {"enabled": False})]
+    assert hass.states.get(NIGHT_SWITCH).state == "off"
+
+    await _push(hass, service, {"type": "mode-schedule.changed", "schedule": {**NIGHT, "enabled": True, "time": "23:00"}})
+    assert hass.states.get(NIGHT_SWITCH).state == "on" and hass.states.get(NIGHT_SWITCH).attributes["time"] == "23:00"
+
+    await _push(hass, service, {"type": "mode-schedule.removed", "id": "m1"})
+    assert hass.states.get(NIGHT_SWITCH).state == "unavailable"
+
+
+async def test_add_mode_schedule_uses_home_assistants_time_zone_and_trims_the_time(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    result = await hass.services.async_call(
+        DOMAIN, "add_mode_schedule", {"name": "Night", "mode": "armed_home", "time": "22:00:00", "days": ["mon", "fri"]},
+        blocking=True, return_response=True,
+    )
+
+    _, _, body = service.mode_schedule_calls[0]
+    assert body == {"name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon", "fri"], "timeZone": hass.config.time_zone}
+    assert result["id"] == "m-new"
+    assert (await _entity(hass, "switch.zwave_alarm_schedule_night")).state == "on"  # published at once
+
+
+async def test_mode_schedule_actions_list_update_and_remove(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.mode_schedules = [NIGHT]
+    await setup()
+    await _settle(hass, service)
+
+    listed = await hass.services.async_call(DOMAIN, "list_mode_schedules", {}, blocking=True, return_response=True)
+    assert [x["id"] for x in listed["schedules"]] == ["m-new"]
+    await hass.services.async_call(DOMAIN, "update_mode_schedule", {"schedule_id": "m1", "enabled": False}, blocking=True, return_response=True)
+    assert service.mode_schedule_calls[-1] == ("PATCH", "m1", {"enabled": False})
+    await hass.services.async_call(DOMAIN, "remove_mode_schedule", {"schedule_id": "m1"}, blocking=True)
+    assert service.mode_schedule_calls[-1][:2] == ("DELETE", "m1")
+
+
+async def test_a_clashing_mode_schedule_is_explained(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.mode_schedule_status = 409
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match=r"Another enabled schedule \(m-other\)"):
+        await hass.services.async_call(
+            DOMAIN, "add_mode_schedule", {"name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon"]},
+            blocking=True, return_response=True,
+        )
+
+
+@pytest.mark.parametrize("data", [{"mode": "armed_night"}, {"days": []}])
+async def test_update_mode_schedule_rejects_a_bad_field_before_the_service(hass: HomeAssistant, service: FakeService, setup, data) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises((ServiceValidationError, vol.Invalid)):
+        await hass.services.async_call(DOMAIN, "update_mode_schedule", {"schedule_id": "m1", **data}, blocking=True, return_response=True)
+    assert service.mode_schedule_calls == []
+
+
+async def test_get_history_sends_the_filters_and_returns_who_and_which_device(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    result = await hass.services.async_call(
+        DOMAIN, "get_history", {"event_type": ["tamper", "code_changed"], "device_id": "s1", "limit": 20}, blocking=True, return_response=True
+    )
+
+    query = service.event_queries[0]
+    assert query["type"] == "tamper,code_changed" and query["deviceId"] == "s1" and query["limit"] == "20"
+    assert result["events"][0]["deviceName"] == "Front door"
+
+
+async def test_new_event_types_reach_the_security_event_entity_with_actor_and_device(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await _push(hass, service, {"type": "event.recorded", "event": {
+        "id": "e9", "type": "mode_schedule_applied", "occurredAt": 7, "details": "Night", "actor": "Schedule Night",
+        "deviceId": None, "deviceName": None}})
+
+    state = hass.states.get("event.zwave_alarm_security_events")
+    assert state.attributes["event_type"] == "mode_schedule_applied"
+    assert state.attributes["actor"] == "Schedule Night"
+
+
+async def test_history_and_schedule_actions_are_administrator_only(hass: HomeAssistant, service: FakeService, setup, hass_read_only_user) -> None:
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+
+    await setup()
+    await _settle(hass, service)
+
+    for name, data in (("get_history", {}), ("list_mode_schedules", {}), ("remove_mode_schedule", {"schedule_id": "m1"})):
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call(DOMAIN, name, data, blocking=True, return_response=name != "remove_mode_schedule",
+                                           context=Context(user_id=hass_read_only_user.id))
+    assert service.mode_schedule_calls == [] and service.event_queries == []

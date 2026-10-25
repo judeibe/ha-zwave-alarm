@@ -32,6 +32,24 @@ SECURITY_EVENT_TYPES = [
     "device_fault",
     "lockout",
     "guest_code_used",
+    # service 3.6.0+
+    "bypassed",
+    "tamper",
+    "tamper_cleared",
+    "siren_silenced",
+    "code_added",
+    "code_changed",
+    "code_removed",
+    "duress_code_set",
+    "duress_code_removed",
+    "guest_schedule_added",
+    "guest_schedule_updated",
+    "guest_schedule_removed",
+    "mode_schedule_added",
+    "mode_schedule_updated",
+    "mode_schedule_removed",
+    "mode_schedule_applied",
+    "mode_schedule_skipped",
 ]
 
 
