@@ -4,7 +4,7 @@ import { RouterProvider } from "react-router";
 import { ApiError } from "../api";
 import { ApiContext } from "../context";
 import { createTestRouter } from "../routes";
-import type { Overview } from "../types";
+import type { Overview, Zone } from "../types";
 import { fakeApi, OVERVIEW, WITH_LOCKS } from "./fixtures";
 
 function setup(path = "/", fail: Record<string, string> = {}, overview: Overview = OVERVIEW, results: Record<string, unknown> = {}) {
@@ -486,5 +486,35 @@ describe("alarm events", () => {
     await user.click(await screen.findByRole("button", { name: "Medical" }));
     await user.click(await screen.findByRole("button", { name: "Raise medical alarm" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("panic", { kind: "MEDICAL" }));
+  });
+});
+
+describe("sirens and tamper", () => {
+  const siren = { nodeId: 14, kind: "OUTDOOR", name: "Garden siren", durationSec: 180, createdAt: 1 } as const;
+
+  it("lists the enrolled sirens with their duration", async () => {
+    setup("/", {}, { ...OVERVIEW, sirens: [siren] });
+    expect(await screen.findByText("Garden siren")).toBeInTheDocument();
+    expect(screen.getByText(/Outdoor · node 14 · sounds 180 s/)).toBeInTheDocument();
+  });
+
+  it("shows no siren section when none is enrolled", async () => {
+    setup("/");
+    await screen.findByText("Armed away");
+    expect(screen.queryByText("Sirens")).not.toBeInTheDocument();
+  });
+
+  it("removes a siren once confirmed", async () => {
+    const { call, user } = setup("/", {}, { ...OVERVIEW, sirens: [siren] });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("siren/delete", { node_id: 14 }));
+  });
+
+  it("shows a tampered sensor on its sheet", async () => {
+    const [downstairs, upstairs] = OVERVIEW.zones as [Zone, Zone];
+    const tampered: Overview = { ...OVERVIEW, zones: [{ ...downstairs, sensors: downstairs.sensors.map((x) => ({ ...x, tampered: true })) }, upstairs] };
+    setup("/sensors/s1", {}, tampered);
+    expect(await screen.findByText("tampered")).toBeInTheDocument();
   });
 });

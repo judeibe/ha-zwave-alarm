@@ -158,6 +158,28 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             self._publish_alarm_event(event)
         return silenced
 
+    async def async_put_siren(
+        self, node_id: int, kind: str, name: str | None = None, duration_sec: int | None = None
+    ) -> dict[str, Any]:
+        """Enroll or update a siren via `PUT /api/v1/sirens/{nodeId}` (administrator) and publish it at once."""
+        siren = await self._call_client(
+            api.async_put_siren(
+                self._session, self._host, self._port, None, node_id, kind, name, duration_sec, secure=self._secure
+            ),
+            "siren",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "siren.changed", "siren": siren}))
+        return siren
+
+    async def async_delete_siren(self, node_id: int) -> None:
+        """Remove an enrolled siren via `DELETE /api/v1/sirens/{nodeId}`."""
+        await self._call_client(
+            api.async_delete_siren(self._session, self._host, self._port, None, node_id, secure=self._secure), "siren"
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "siren.removed", "nodeId": node_id}))
+
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
         modes = await self._call_client(

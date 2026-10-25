@@ -595,3 +595,41 @@ async def test_overview_lists_the_open_alarm_events(hass, hass_ws_client, entry)
     ):
         resp = await _send(await hass_ws_client(hass), "overview")
     assert resp["result"]["alarm_events"] == [{"id": "e1"}]
+
+
+async def test_siren_put_maps_wire_names(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_put_siren", AsyncMock(return_value={"nodeId": 14})) as put:
+        resp = await _send(await hass_ws_client(hass), "siren/put", node_id=14, kind="OUTDOOR", name="Garden", duration_sec=120)
+    assert resp["result"] == {"nodeId": 14}
+    assert put.await_args.args[-4:] == (14, "OUTDOOR", "Garden", 120)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"kind": "BASE", "duration_sec": 120}, {"kind": "OUTDOOR", "duration_sec": 30}, {"kind": "OUTDOOR", "duration_sec": 601}, {"kind": "SPEAKER"}],
+)
+async def test_siren_put_rejects_a_bad_duration_or_kind(hass, hass_ws_client, entry, payload) -> None:
+    with patch(f"{API}.async_put_siren", AsyncMock()) as put:
+        resp = await _send(await hass_ws_client(hass), "siren/put", node_id=14, **payload)
+    assert not resp["success"]
+    put.assert_not_awaited()
+
+
+async def test_siren_delete_calls_the_service(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_delete_siren", AsyncMock(return_value=None)) as delete:
+        resp = await _send(await hass_ws_client(hass), "siren/delete", node_id=14)
+    assert resp["success"]
+    assert delete.await_args.args[-1] == 14
+
+
+async def test_overview_lists_the_enrolled_sirens(hass, hass_ws_client, entry) -> None:
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+        data=SimpleNamespace(sirens=[{"nodeId": 14}], alarm_events=[], keypads=[], keypad_settings=None, modes=None, panel=None, locks=[])
+    )
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["result"]["sirens"] == [{"nodeId": 14}]

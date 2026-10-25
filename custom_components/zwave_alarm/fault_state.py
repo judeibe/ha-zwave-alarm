@@ -20,8 +20,8 @@ LOW_BATTERY_THRESHOLD_PERCENT = 20
 
 
 def sensor_is_faulted(sensor: dict[str, Any]) -> bool:
-    """A sensor is at fault when offline or its battery is at/below the low-battery threshold (FR-012)."""
-    if sensor["connectivityStatus"] == "offline":
+    """A sensor is at fault when offline, tampered, or its battery is at/below the low-battery threshold (FR-012)."""
+    if sensor["connectivityStatus"] == "offline" or sensor.get("tampered"):
         return True
     battery_level = sensor["batteryLevel"]
     return battery_level is not None and battery_level <= LOW_BATTERY_THRESHOLD_PERCENT
@@ -42,6 +42,8 @@ def faulted_sensors(zones: list[dict[str, Any]]) -> list[dict[str, Any]]:
             reasons = []
             if sensor["connectivityStatus"] == "offline":
                 reasons.append("offline")
+            if sensor.get("tampered"):
+                reasons.append("tampered")
             battery_level = sensor["batteryLevel"]
             if battery_level is not None and battery_level <= LOW_BATTERY_THRESHOLD_PERCENT:
                 reasons.append("low_battery")

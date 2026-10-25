@@ -1,5 +1,5 @@
 pytest
 pytest-asyncio
 pytest-homeassistant-custom-component
-zwave-alarm-client==0.10.0
+zwave-alarm-client==0.11.0
 home-assistant-frontend

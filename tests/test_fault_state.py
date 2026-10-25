@@ -58,3 +58,14 @@ def test_count_faulted_sensors_zero_with_no_zones() -> None:
 
 def test_count_faulted_sensors_zero_with_empty_zone() -> None:
     assert count_faulted_sensors([{"sensors": []}]) == 0
+
+
+def test_a_tampered_sensor_is_faulted_and_says_why() -> None:
+    from fault_state import faulted_sensors
+
+    sensor = {**_sensor(90), "tampered": True, "name": "Front door"}
+    assert sensor_is_faulted(sensor) is True
+    assert faulted_sensors([{"name": "Downstairs", "sensors": [sensor]}]) == [
+        {"name": "Front door", "zone": "Downstairs", "reasons": ["tampered"]}
+    ]
+    assert sensor_is_faulted({**_sensor(90), "tampered": False}) is False

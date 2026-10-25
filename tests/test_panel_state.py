@@ -49,3 +49,9 @@ def test_panel_attributes_include_timers_and_bypassed_devices() -> None:
     attrs = panel_attributes({"mode": "arming", "exitEndsAt": 10, "entryEndsAt": None, "bypassedDeviceIds": ["s1"]}, [])
     assert (attrs["exit_ends_at"], attrs["entry_ends_at"], attrs["bypassed_device_ids"]) == (10, None, ["s1"])
     assert panel_attributes({"mode": "disarmed"}, [])["bypassed_device_ids"] == []
+
+
+def test_describe_faulted_says_tampered() -> None:
+    from panel_state import describe_faulted
+
+    assert describe_faulted([{"sensorId": "a", "name": "Back door", "reason": "tampered"}]) == "Back door (tampered)"

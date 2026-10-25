@@ -266,3 +266,53 @@ silence:
     entity:
       integration: zwave_alarm
       domain: alarm_control_panel
+set_siren:
+  target:
+    entity:
+      integration: zwave_alarm
+      domain: alarm_control_panel
+  fields:
+    node_id:
+      required: true
+      example: 14
+      selector:
+        number:
+          min: 1
+          mode: box
+    kind:
+      required: true
+      example: outdoor
+      selector:
+        select:
+          options:
+            - base
+            - dome
+            - outdoor
+          translation_key: siren_kind
+    name:
+      required: false
+      example: Garden siren
+      selector:
+        text:
+    duration:
+      required: false
+      example: 180
+      selector:
+        number:
+          min: 60
+          max: 600
+          unit_of_measurement: s
+          mode: box
+remove_siren:
+  target:
+    entity:
+      integration: zwave_alarm
+      domain: alarm_control_panel
+  fields:
+    node_id:
+      required: true
+      example: 14
+      selector:
+        number:
+          min: 1
+          mode: box

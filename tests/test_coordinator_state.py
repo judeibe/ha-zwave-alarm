@@ -283,3 +283,28 @@ def test_alarm_event_adds_updates_and_closes_an_event() -> None:
 def test_a_snapshot_from_an_older_service_has_no_alarm_events() -> None:
     state = apply_event(StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []})
     assert state.alarm_events == []
+
+
+_SIREN = {"nodeId": 14, "kind": "OUTDOOR", "name": "Garden", "durationSec": 180, "createdAt": 1}
+
+
+def test_snapshot_carries_the_enrolled_sirens() -> None:
+    state = apply_event(
+        StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": [], "sirens": [_SIREN]}
+    )
+    assert state.sirens == [_SIREN]
+
+
+def test_siren_changed_adds_or_replaces_and_siren_removed_drops() -> None:
+    state = apply_event(StreamState(panel=None, zones=[]), {"type": "siren.changed", "siren": _SIREN})
+    state = apply_event(state, {"type": "siren.changed", "siren": {**_SIREN, "durationSec": 300}})
+    state = apply_event(state, {"type": "siren.changed", "siren": {**_SIREN, "nodeId": 3, "kind": "BASE", "durationSec": 600}})
+    assert [(s["nodeId"], s["durationSec"]) for s in state.sirens] == [(3, 600), (14, 300)]
+    assert apply_event(state, {"type": "siren.removed", "nodeId": 3}).sirens == [{**_SIREN, "durationSec": 300}]
+
+
+def test_sensor_fault_carries_tampered_and_keeps_it_when_absent() -> None:
+    state = StreamState(panel=None, zones=[_zone("z1", [_sensor("s1", tampered=False)])])
+    fault = {"type": "sensor.fault", "sensorId": "s1", "connectivityStatus": "online", "batteryLevel": 90}
+    assert apply_event(state, {**fault, "tampered": True}).zones[0]["sensors"][0]["tampered"] is True
+    assert apply_event(state, fault).zones[0]["sensors"][0]["tampered"] is False

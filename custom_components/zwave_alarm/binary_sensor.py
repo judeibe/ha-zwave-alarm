@@ -66,6 +66,7 @@ async def async_setup_entry(
     _add_new_zones()
     entry.async_on_unload(coordinator.async_add_listener(_add_new_zones))
     async_add_entities([ZwaveAlarmSirenSoundingSensor(coordinator, entry)])
+    _async_add_tamper_sensors(coordinator, entry, async_add_entities)
 
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadConnectivitySensor(c, e, keypad)]
@@ -184,3 +185,57 @@ class ZwaveAlarmSirenSoundingSensor(CoordinatorEntity[ZwaveAlarmCoordinator], Bi
     @property
     def is_on(self) -> bool | None:
         return siren_sounding(self.coordinator.data.alarm_events) if self.coordinator.data is not None else None
+
+
+@callback
+def _async_add_tamper_sensors(
+    coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """One tamper sensor per assigned sensor, added the first time each sensor id shows up (also for later assignments)."""
+    known: set[str] = set()
+
+    @callback
+    def _add() -> None:
+        if coordinator.data is None:
+            return
+        new = [s for zone in coordinator.data.zones for s in zone["sensors"] if s["id"] not in known]
+        known.update(s["id"] for s in new)
+        async_add_entities(ZwaveAlarmTamperSensor(coordinator, entry, s["id"], s["name"]) for s in new)
+
+    _add()
+    entry.async_on_unload(coordinator.async_add_listener(_add))
+
+
+class ZwaveAlarmTamperSensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
+    """On while the sensor reports its cover removed or not seated. Tamper clears only when the cover is reseated."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.TAMPER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, sensor_id: str, sensor_name: str) -> None:
+        super().__init__(coordinator)
+        self._sensor_id = sensor_id
+        self._attr_unique_id = f"{entry.entry_id}_sensor_{sensor_id}_tamper"
+        self.entity_id = async_generate_entity_id(ENTITY_ID_FORMAT, f"zwave_alarm_tamper_{sensor_name}", hass=coordinator.hass)
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    def _sensor(self) -> dict[str, Any] | None:
+        if self.coordinator.data is None:
+            return None
+        return next((s for z in self.coordinator.data.zones for s in z["sensors"] if s["id"] == self._sensor_id), None)
+
+    @property
+    def name(self) -> str | None:
+        sensor = self._sensor()
+        return f"{sensor['name']} tamper" if sensor else None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._sensor() is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        sensor = self._sensor()
+        # A service older than 3.3.0 never sends `tampered`: unknown, not "not tampered".
+        return sensor.get("tampered") if sensor is not None and "tampered" in sensor else None

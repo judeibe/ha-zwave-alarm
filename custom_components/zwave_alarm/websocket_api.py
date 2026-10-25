@@ -198,6 +198,13 @@ def _modes(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, dict[str, int]]
     return getattr(data, "modes", None)
 
 
+def _sirens(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
+    """The enrolled sirens the coordinator last received; empty before a snapshot or on a service older than 3.3.0."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    data = coordinator.data if coordinator is not None else None
+    return list(getattr(data, "sirens", None) or [])
+
+
 def _alarm_events(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, Any]]:
     """The open alarm events the coordinator last received; empty before a snapshot or on a service older than 3.2.0."""
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -304,6 +311,7 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         "keypad_settings": keypad_settings,
         "modes": _modes(hass, call.entry),
         "alarm_events": _alarm_events(hass, call.entry),
+        "sirens": _sirens(hass, call.entry),
         "locks": _lock_summaries(hass, call.entry),
         "discoverable_locks": available_locks,
         "discoverable_locks_error": available_locks_error,
@@ -432,6 +440,21 @@ async def ws_panic(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any
 async def ws_silence(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
     """Mute the sounding sirens; the alarm stays open."""
     return {"silenced": await hass.data[DOMAIN][call.entry.entry_id].async_silence()}
+
+
+@_command({vol.Required("type"): "zwave_alarm/siren/put", vol.Required("node_id"): vol.All(int, vol.Range(min=1)),
+           vol.Required("kind"): vol.In(["BASE", "DOME", "OUTDOOR"]), vol.Optional("name"): vol.All(str, vol.Length(min=1)),
+           vol.Optional("duration_sec"): vol.All(int, vol.Range(min=60, max=600))})
+async def ws_siren_put(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Enroll or update a siren (administrator on the service). Only an outdoor siren has a duration."""
+    if "duration_sec" in msg and msg["kind"] != "OUTDOOR":
+        raise api.BadRequest("Only an outdoor siren has a configurable duration.")
+    return await call(api.async_put_siren, msg["node_id"], msg["kind"], msg.get("name"), msg.get("duration_sec"))
+
+
+@_command({vol.Required("type"): "zwave_alarm/siren/delete", vol.Required("node_id"): vol.All(int, vol.Range(min=1))})
+async def ws_siren_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    await call(api.async_delete_siren, msg["node_id"])
 
 
 # --- People and codes -------------------------------------------------------
@@ -613,7 +636,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
-    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence,
+    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence, ws_siren_put, ws_siren_delete,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,
