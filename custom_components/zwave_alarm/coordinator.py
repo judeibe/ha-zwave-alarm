@@ -224,6 +224,36 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             "user",
         )
 
+    async def async_get_guest_schedules(self, user_id: str) -> list[dict[str, Any]]:
+        return await self._call_client(
+            api.async_get_guest_schedules(self._session, self._host, self._port, None, user_id, secure=self._secure),
+            "schedule request",
+        )
+
+    async def async_create_guest_schedule(self, user_id: str, name: str, days: list[str], **fields: Any) -> dict[str, Any]:
+        """Add a keypad schedule for a guest; `time_zone` defaults to Home Assistant's, because the service may run in UTC."""
+        fields.setdefault("time_zone", self.hass.config.time_zone)
+        return await self._call_client(
+            api.async_create_guest_schedule(
+                self._session, self._host, self._port, None, user_id, name, days, secure=self._secure, **fields
+            ),
+            "schedule",
+        )
+
+    async def async_update_guest_schedule(self, user_id: str, schedule_id: str, **fields: Any) -> dict[str, Any]:
+        return await self._call_client(
+            api.async_update_guest_schedule(
+                self._session, self._host, self._port, None, user_id, schedule_id, secure=self._secure, **fields
+            ),
+            "schedule",
+        )
+
+    async def async_delete_guest_schedule(self, user_id: str, schedule_id: str) -> None:
+        await self._call_client(
+            api.async_delete_guest_schedule(self._session, self._host, self._port, None, user_id, schedule_id, secure=self._secure),
+            "schedule",
+        )
+
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
         modes = await self._call_client(

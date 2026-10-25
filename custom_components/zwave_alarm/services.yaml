@@ -376,3 +376,113 @@ create_installer:
       selector:
         text:
           type: password
+list_guest_schedules:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+add_guest_schedule:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+    name:
+      required: true
+      example: Weekday cleaners
+      selector:
+        text:
+    days:
+      required: true
+      example: "[mon, tue, wed, thu, fri]"
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: guest_weekday
+    all_day:
+      required: false
+      selector:
+        boolean:
+    start:
+      required: false
+      example: "08:00"
+      selector:
+        time:
+    end:
+      required: false
+      example: "17:30"
+      selector:
+        time:
+    time_zone:
+      required: false
+      example: America/Chicago
+      selector:
+        text:
+update_guest_schedule:
+  fields:
+    schedule_id:
+      required: true
+      selector:
+        text:
+    user_id:
+      required: true
+      selector:
+        text:
+    name:
+      required: false
+      example: Weekday cleaners
+      selector:
+        text:
+    days:
+      required: false
+      example: "[mon, tue, wed, thu, fri]"
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: guest_weekday
+    all_day:
+      required: false
+      selector:
+        boolean:
+    start:
+      required: false
+      example: "08:00"
+      selector:
+        time:
+    end:
+      required: false
+      example: "17:30"
+      selector:
+        time:
+    time_zone:
+      required: false
+      example: America/Chicago
+      selector:
+        text:
+remove_guest_schedule:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+    schedule_id:
+      required: true
+      selector:
+        text:

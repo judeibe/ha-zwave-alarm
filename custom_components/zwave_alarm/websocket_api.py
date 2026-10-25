@@ -23,6 +23,7 @@ import zwave_alarm_client as api
 
 from .const import CONF_SSL, DOMAIN
 from .fault_state import faulted_sensors
+from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_schedule, schedule_fields
 from .panel_state import map_panel_mode
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +82,9 @@ _ERROR_CODES: list[tuple[type[Exception], str]] = [
     (api.ServiceUnavailable, "service_unavailable"),  # a CannotConnect subclass: must precede it
     (api.CannotConnect, "cannot_connect"),
 ]
+
+
+_SCHEDULE_FIELDS = ("name", "days", "all_day", "start", "end", "time_zone")
 
 
 class _Call:
@@ -538,6 +542,68 @@ async def ws_user_clear_duress_code(hass: HomeAssistant, call: _Call, msg: dict[
     await call(api.async_delete_duress_code, msg["user_id"])
 
 
+# --- Guest schedules ---------------------------------------------------------
+
+WEEKDAY_SCHEMA = vol.In(GUEST_WEEKDAYS)
+_TIME = vol.All(str, vol.Match(r"^\d{2}:\d{2}(:\d{2})?$"))
+_SCHEDULE_FIELDS_SCHEMA = {
+    vol.Optional("name"): vol.All(str, vol.Length(min=1)),
+    vol.Optional("days"): [WEEKDAY_SCHEMA],
+    vol.Optional("all_day"): bool,
+    vol.Optional("start"): vol.Any(_TIME, None),
+    vol.Optional("end"): vol.Any(_TIME, None),
+    vol.Optional("time_zone"): vol.Any(str, None),
+}
+
+
+def _checked(fields: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
+    """The client's fields from a payload, after the checks the service makes (a clear message, no round trip).
+
+    An update (`partial`) is only checked for what it carries: the service re-checks it merged with the stored schedule.
+    """
+    try:
+        built = schedule_fields(fields)
+        if partial:
+            check_schedule(built.get("days"), True, None, None)
+            if built.get("start") is not None and built.get("start") == built.get("end"):
+                raise InvalidSchedule("The start and end time must differ.")
+        else:
+            check_schedule(built["days"], built.get("all_day", False), built.get("start"), built.get("end"))
+    except InvalidSchedule as err:
+        raise api.BadRequest(str(err)) from err
+    return built
+
+
+@_command({vol.Required("type"): "zwave_alarm/guest_schedule/list", vol.Required("user_id"): str})
+async def ws_guest_schedule_list(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    return await call(api.async_get_guest_schedules, msg["user_id"])
+
+
+@_command({vol.Required("type"): "zwave_alarm/guest_schedule/create", vol.Required("user_id"): str,
+           vol.Required("name"): vol.All(str, vol.Length(min=1)), vol.Required("days"): [WEEKDAY_SCHEMA],
+           vol.Optional("all_day"): bool, vol.Optional("start"): vol.Any(_TIME, None), vol.Optional("end"): vol.Any(_TIME, None),
+           vol.Optional("time_zone"): vol.Any(str, None)})
+async def ws_guest_schedule_create(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    fields = _checked({k: v for k, v in msg.items() if k in ("name", "days", "all_day", "start", "end", "time_zone")})
+    name, days = fields.pop("name"), fields.pop("days")
+    return await hass.data[DOMAIN][call.entry.entry_id].async_create_guest_schedule(msg["user_id"], name, days, **fields)
+
+
+@_command({vol.Required("type"): "zwave_alarm/guest_schedule/update", vol.Required("user_id"): str,
+           vol.Required("schedule_id"): str, **_SCHEDULE_FIELDS_SCHEMA})
+async def ws_guest_schedule_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    fields = _checked({k: v for k, v in msg.items() if k in _SCHEDULE_FIELDS}, partial=True)
+    if not fields:
+        raise api.BadRequest("Change at least one field.")
+    return await call(api.async_update_guest_schedule, msg["user_id"], msg["schedule_id"], **fields)
+
+
+@_command({vol.Required("type"): "zwave_alarm/guest_schedule/delete", vol.Required("user_id"): str,
+           vol.Required("schedule_id"): str})
+async def ws_guest_schedule_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+    await call(api.async_delete_guest_schedule, msg["user_id"], msg["schedule_id"])
+
+
 # --- Keypads ----------------------------------------------------------------
 
 
@@ -667,6 +733,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
     ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm, ws_panic, ws_silence, ws_siren_put, ws_siren_delete, ws_user_set_duress_code, ws_user_clear_duress_code,
+    ws_guest_schedule_list, ws_guest_schedule_create, ws_guest_schedule_update, ws_guest_schedule_delete,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,

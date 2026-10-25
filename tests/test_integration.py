@@ -84,6 +84,8 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.schedule_calls: list[tuple] = []
+        self.schedule_status = 200
         self.code_calls: list[tuple] = []
         self.code_status = 204
         self.code_error = "code_in_use"
@@ -175,6 +177,22 @@ class FakeService:
             {"id": "u-new", "name": body["name"], "role": body["role"], "guestExpiresAt": 1700172800000, "hasCode": True},
             status=201,
         )
+
+    async def user_schedules(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json() if request.can_read_body else {}
+        user_id, schedule_id = request.match_info["user_id"], request.match_info.get("schedule_id")
+        self.schedule_calls.append((request.method, user_id, schedule_id, body))
+        if self.schedule_status != 200:
+            code = {400: "bad_request", 404: "not_found"}[self.schedule_status]
+            return web.json_response({"error": {"code": code, "message": f"service said {code}"}}, status=self.schedule_status)
+        schedule = {"id": schedule_id or "sch1", "userId": user_id, "name": "Cleaners", "days": ["mon"], "allDay": False,
+                    "start": "08:00", "end": "17:30", "timeZone": None, "createdAt": 1, **body}
+        if request.method == "GET":
+            return web.json_response([schedule])
+        if request.method == "DELETE":
+            return web.Response(status=204)
+        return web.json_response(schedule, status=201 if request.method == "POST" else 200)
 
     async def arm(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -296,6 +314,8 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/users", fake.create_user)
     app.router.add_route("*", "/api/v1/users/{user_id}/code", fake.user_code)
     app.router.add_route("*", "/api/v1/users/{user_id}/duress-code", fake.user_code)
+    app.router.add_route("*", "/api/v1/users/{user_id}/schedules", fake.user_schedules)
+    app.router.add_route("*", "/api/v1/users/{user_id}/schedules/{schedule_id}", fake.user_schedules)
     app.router.add_post("/api/v1/panel/arm", fake.arm)
     app.router.add_post("/api/v1/panel/panic", fake.panic)
     app.router.add_post("/api/v1/panel/silence", fake.silence)
@@ -1717,3 +1737,101 @@ async def test_code_actions_are_administrator_only(hass: HomeAssistant, service:
             DOMAIN, "set_user_code", {"user_id": "u1", "code": "4821"}, blocking=True, context=Context(user_id=hass_read_only_user.id)
         )
     assert service.code_calls == []
+
+
+async def test_add_guest_schedule_sends_home_assistants_time_zone_and_trims_times(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    result = await hass.services.async_call(
+        DOMAIN, "add_guest_schedule",
+        {"user_id": "g1", "name": "Cleaners", "days": ["mon", "thu"], "start": "08:00:00", "end": "17:30:00"},
+        blocking=True, return_response=True,
+    )
+
+    method, user_id, _, body = service.schedule_calls[0]
+    assert (method, user_id) == ("POST", "g1")
+    assert body == {"name": "Cleaners", "days": ["mon", "thu"], "start": "08:00", "end": "17:30", "timeZone": hass.config.time_zone}
+    assert result["id"] == "sch1"
+
+
+async def test_add_guest_schedule_lets_the_caller_choose_the_time_zone_and_all_day(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(
+        DOMAIN, "add_guest_schedule",
+        {"user_id": "g1", "name": "Weekend", "days": ["sat", "sun"], "all_day": True, "time_zone": "America/Chicago"},
+        blocking=True, return_response=True,
+    )
+
+    assert service.schedule_calls[0][3] == {"name": "Weekend", "days": ["sat", "sun"], "allDay": True, "timeZone": "America/Chicago"}
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ({"name": "x", "days": ["mon"]}, "start and an end"),
+        ({"name": "x", "days": ["mon"], "start": "08:00", "end": "08:00"}, "differ"),
+        ({"name": "x", "days": ["mon", "mon"], "all_day": True}, "once"),
+    ],
+)
+async def test_add_guest_schedule_explains_a_schedule_the_service_would_refuse(
+    hass: HomeAssistant, service: FakeService, setup, data, message
+) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match=message):
+        await hass.services.async_call(DOMAIN, "add_guest_schedule", {"user_id": "g1", **data}, blocking=True, return_response=True)
+    assert service.schedule_calls == []
+
+
+async def test_list_update_and_remove_guest_schedule_actions(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    listed = await hass.services.async_call(DOMAIN, "list_guest_schedules", {"user_id": "g1"}, blocking=True, return_response=True)
+    assert [s["id"] for s in listed["schedules"]] == ["sch1"]
+
+    await hass.services.async_call(
+        DOMAIN, "update_guest_schedule", {"user_id": "g1", "schedule_id": "sch1", "name": "Renamed"}, blocking=True, return_response=True
+    )
+    assert service.schedule_calls[-1] == ("PATCH", "g1", "sch1", {"name": "Renamed"})  # only what was passed
+
+    await hass.services.async_call(DOMAIN, "remove_guest_schedule", {"user_id": "g1", "schedule_id": "sch1"}, blocking=True)
+    assert service.schedule_calls[-1][:3] == ("DELETE", "g1", "sch1")
+
+
+async def test_update_guest_schedule_needs_a_change(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match="at least one"):
+        await hass.services.async_call(
+            DOMAIN, "update_guest_schedule", {"user_id": "g1", "schedule_id": "sch1"}, blocking=True, return_response=True
+        )
+
+
+@pytest.mark.parametrize(("status", "message"), [(400, "service said bad_request"), (404, "could not find")])
+async def test_guest_schedule_errors_are_explained(hass: HomeAssistant, service: FakeService, setup, status, message) -> None:
+    service.schedule_status = status
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match=message):
+        await hass.services.async_call(DOMAIN, "remove_guest_schedule", {"user_id": "g1", "schedule_id": "nope"}, blocking=True)
+
+
+async def test_guest_schedule_actions_are_administrator_only(hass: HomeAssistant, service: FakeService, setup, hass_read_only_user) -> None:
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(
+            DOMAIN, "list_guest_schedules", {"user_id": "g1"}, blocking=True, return_response=True,
+            context=Context(user_id=hass_read_only_user.id),
+        )
