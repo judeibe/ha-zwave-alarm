@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { FIELD, Hint, Pill, SectionTitle } from "../components";
+import { Button, ErrorBanner, FIELD, Hint, Pill, SectionTitle } from "../components";
+import { useConfirm } from "../ui/Confirm";
 import { useApi } from "../context";
 import { setModeDelays } from "../patches";
 import { useAction } from "../useAction";
-import type { ArmedModeKey, ModeDelays } from "../types";
+import type { ArmedModeKey, FaultedSensor, ModeDelays } from "../types";
 import { useOverview } from "../overview";
 import { Icon, type IconName } from "../ui/Icon";
 import { InsetList, ListRow } from "../ui/List";
@@ -67,6 +68,7 @@ export function OverviewPage() {
         </>
       )}
       {!zones.length && <Hint>No zones yet. Create one under Zones, then assign your Z-Wave sensors to it.</Hint>}
+      <ArmSection />
       <ModeDelaysSection />
     </section>
   );
@@ -119,6 +121,48 @@ export function ModeDelaysSection() {
         </InsetList>
       ))}
       <Hint>0 to 180 seconds. At 0, door and entryway sensors alarm immediately.</Hint>
+    </>
+  );
+}
+
+const REASON: Record<FaultedSensor["reason"], string> = {
+  open: "open",
+  offline: "offline",
+  tampered: "tampered",
+  not_set_up: "not set up",
+  updating: "updating",
+};
+
+/**
+ * Arm Home / Away. When sensors are faulted the service refuses and lists them; the person confirms, and the arm is
+ * sent again with those ids bypassed (they stay out until the next disarm).
+ */
+export function ArmSection() {
+  const api = useApi();
+  const confirm = useConfirm();
+  const { panel } = useOverview();
+  const { run, error } = useAction();
+  if (panel?.state !== "disarmed") return null;
+  const arm = (mode: ArmedModeKey) =>
+    run(async () => {
+      const first = await api.call<{ needs_bypass: FaultedSensor[] }>("arm", { mode });
+      if (!first.needs_bypass.length) return;
+      const list = first.needs_bypass.map((f) => `${f.name} (${REASON[f.reason] ?? f.reason})`).join(", ");
+      const yes = await confirm({ title: "Bypass faulted sensors?", message: `${list}. They will be left out until you disarm.`, confirmLabel: "Bypass and arm" });
+      if (yes) await api.call("arm", { mode, bypass: first.needs_bypass.map((f) => f.sensorId) });
+    });
+  return (
+    <>
+      <SectionTitle>Arm</SectionTitle>
+      <ErrorBanner message={error} />
+      <div className="grid grid-cols-2 gap-3">
+        <Button variant="primary" onClick={() => arm("armed_home")}>
+          Arm home
+        </Button>
+        <Button variant="primary" onClick={() => arm("armed_away")}>
+          Arm away
+        </Button>
+      </div>
     </>
   );
 }

@@ -10,6 +10,14 @@ export interface ModeDelays {
 }
 export type ArmedModeKey = "armed_home" | "armed_away";
 export type Modes = Record<ArmedModeKey, ModeDelays>;
+export type FaultReason = "open" | "offline" | "tampered" | "not_set_up" | "updating";
+/** A sensor an arm was refused for until it is fixed or bypassed. */
+export interface FaultedSensor {
+  sensorId: string;
+  name: string;
+  zoneId: string;
+  reason: FaultReason;
+}
 export interface Sensor {
   id: string;
   zwaveNodeId: number;

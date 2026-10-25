@@ -83,6 +83,8 @@ class FakeService:
         self.keypad_settings: dict | None = {"requireCodeToArm": False}
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
+        self.arm_calls: list[dict] = []
+        self.arm_faulted: list[dict] = []  # non-empty: an arm without `bypass` covering them is refused with 409 needs_bypass
         self.modes_calls: list[dict] = []
         self.modes_status = 200
         self.modes: dict | None = {"armed_home": {"entryDelaySec": 60, "exitDelaySec": 60}, "armed_away": {"entryDelaySec": 45, "exitDelaySec": 30}}
@@ -110,6 +112,20 @@ class FakeService:
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
+
+    async def arm(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.arm_calls.append(body)
+        pending = [f for f in self.arm_faulted if f["sensorId"] not in body.get("bypass", [])]
+        if pending:
+            return web.json_response(
+                {"error": {"code": "needs_bypass", "message": "Faulted sensors need a bypass.", "faulted": pending}}, status=409
+            )
+        return web.json_response(
+            {"mode": "arming", "armedMode": body["mode"], "pendingDelayEndsAt": None, "exitEndsAt": 1700000060000,
+             "bypassedDeviceIds": body.get("bypass", [])}
+        )
 
     async def patch_modes(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -208,6 +224,7 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
+    app.router.add_post("/api/v1/panel/arm", fake.arm)
     app.router.add_patch("/api/v1/modes", fake.patch_modes)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
@@ -260,6 +277,15 @@ def _device(hass: HomeAssistant, entry: MockConfigEntry, identifier: str):
     if hasattr(registry, "async_get_device_by_identifier"):
         return registry.async_get_device_by_identifier((DOMAIN, identifier), entry.entry_id)
     return registry.async_get_device(identifiers={(DOMAIN, identifier)})
+
+
+async def _entity(hass: HomeAssistant, entity_id: str):
+    """The state of an entity that is added after the first snapshot; waits for it instead of guessing a delay."""
+    for _ in range(100):
+        if (state := hass.states.get(entity_id)) is not None:
+            return state
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"{entity_id} never appeared")
 
 
 async def _settle(hass: HomeAssistant, service: FakeService) -> None:
@@ -1220,13 +1246,14 @@ async def test_delay_numbers_follow_the_snapshot(hass: HomeAssistant, service: F
     await setup()
     await _settle(hass, service)
 
-    assert hass.states.get("number.z_wave_alarm_home_entry_delay").state == "60"
-    assert hass.states.get(DELAY).state == "30"
+    assert (await _entity(hass, "number.z_wave_alarm_home_entry_delay")).state == "60"
+    assert (await _entity(hass, DELAY)).state == "30"
 
 
 async def test_delay_number_writes_one_mode_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
     await setup()
     await _settle(hass, service)
+    await _entity(hass, DELAY)  # added by a listener after the snapshot; calling the service first can race it
 
     await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 90}, blocking=True)
 
@@ -1238,6 +1265,7 @@ async def test_delay_number_writes_one_mode_and_shows_it_at_once(hass: HomeAssis
 async def test_delay_number_follows_panel_changed(hass: HomeAssistant, service: FakeService, setup) -> None:
     await setup()
     await _settle(hass, service)
+    await _entity(hass, DELAY)
     modes = {**service.modes, "armed_away": {"entryDelaySec": 5, "exitDelaySec": 6}}
 
     await _push(hass, service, {"type": "panel.changed", "mode": "disarmed", "pendingDelayEndsAt": None, "modes": modes})
@@ -1248,6 +1276,7 @@ async def test_delay_number_follows_panel_changed(hass: HomeAssistant, service: 
 async def test_delay_number_above_180_is_refused_before_the_service(hass: HomeAssistant, service: FakeService, setup) -> None:
     await setup()
     await _settle(hass, service)
+    await _entity(hass, DELAY)
 
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 181}, blocking=True)
@@ -1258,6 +1287,7 @@ async def test_delay_number_refused_by_the_service_raises_and_stays_put(hass: Ho
     service.modes_status = 400
     await setup()
     await _settle(hass, service)
+    await _entity(hass, DELAY)
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 90}, blocking=True)
@@ -1270,3 +1300,55 @@ async def test_no_delay_numbers_on_a_service_without_modes(hass: HomeAssistant, 
     await _settle(hass, service)
 
     assert hass.states.get(DELAY) is None
+
+
+ALARM = "alarm_control_panel.zwave_alarm"
+FRONT_DOOR = {"sensorId": "s1", "name": "Front door", "zoneId": "z1", "reason": "open"}
+
+
+async def test_arm_refused_for_faulted_sensors_names_them(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.arm_faulted = [FRONT_DOOR]
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match=r"Front door \(open\)"):
+        await hass.services.async_call("alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True)
+    assert service.arm_calls == [{"mode": "armed_away"}]
+
+
+async def test_arm_action_bypasses_the_listed_sensors(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.arm_faulted = [FRONT_DOOR]
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(
+        DOMAIN, "arm", {"entity_id": ALARM, "mode": "armed_home", "bypass": ["s1"], "source": "app"}, blocking=True
+    )
+
+    assert service.arm_calls == [{"mode": "armed_home", "bypass": ["s1"], "source": "app"}]
+    attrs = hass.states.get(ALARM).attributes
+    assert attrs["bypassed_device_ids"] == ["s1"]
+    assert attrs["exit_ends_at"] == 1700000060000
+    assert attrs["armed_mode"] == "armed_home"
+
+
+async def test_arm_action_without_bypass_still_refused_for_other_faults(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.arm_faulted = [FRONT_DOOR, {**FRONT_DOOR, "sensorId": "s2", "name": "Garage", "reason": "offline"}]
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match=r"Garage \(offline\)"):
+        await hass.services.async_call(DOMAIN, "arm", {"entity_id": ALARM, "mode": "armed_away", "bypass": ["s1"]}, blocking=True)
+
+
+async def test_panel_changed_carries_timers_and_bypass_to_the_attributes(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await _push(hass, service, {
+        "type": "panel.changed", "mode": "alarm_pending", "pendingDelayEndsAt": 5, "entryEndsAt": 5000,
+        "exitEndsAt": None, "bypassedDeviceIds": ["s9"],
+    })
+
+    attrs = hass.states.get(ALARM).attributes
+    assert (attrs["entry_ends_at"], attrs["exit_ends_at"], attrs["bypassed_device_ids"]) == (5000, None, ["s9"])

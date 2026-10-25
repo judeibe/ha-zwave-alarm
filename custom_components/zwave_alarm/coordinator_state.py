@@ -117,6 +117,9 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             "pendingDelayEndsAt": event["pendingDelayEndsAt"],
             "disarmedZoneIds": event.get("disarmedZoneIds", []),
             "triggeredBy": event.get("triggeredBy"),
+            "exitEndsAt": event.get("exitEndsAt"),
+            "entryEndsAt": event.get("entryEndsAt"),
+            "bypassedDeviceIds": event.get("bypassedDeviceIds", []),
         }
         # `armedMode` is only on the REST panel, not the push channel; a mode
         # change that leaves the armed family makes any earlier value stale.
@@ -186,5 +189,8 @@ def merge_panel(state: StreamState, panel: dict[str, Any]) -> StreamState:
             "armedMode": panel.get("armedMode"),
             "disarmedZoneIds": panel.get("disarmedZoneIds", []),
             "triggeredBy": panel.get("triggeredBy"),
+            "exitEndsAt": panel.get("exitEndsAt"),
+            "entryEndsAt": panel.get("entryEndsAt"),
+            "bypassedDeviceIds": panel.get("bypassedDeviceIds", []),
         },
     )

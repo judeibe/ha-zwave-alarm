@@ -29,6 +29,9 @@ def test_panel_attributes_resolve_zone_names() -> None:
         "disarmed_zones": ["Downstairs"],
         "triggered_by_zone": "Garage",
         "triggered_by_sensor_id": "s9",
+        "exit_ends_at": None,
+        "entry_ends_at": None,
+        "bypassed_device_ids": [],
     }
 
 

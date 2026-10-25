@@ -398,6 +398,21 @@ async def ws_sensor_unassign(hass: HomeAssistant, call: _Call, msg: dict[str, An
     await call(api.async_unassign_sensor, msg["sensor_id"])
 
 
+# --- Arming ------------------------------------------------------------------
+
+
+@_command({vol.Required("type"): "zwave_alarm/arm", vol.Required("mode"): vol.In(["armed_home", "armed_away"]),
+           vol.Optional("bypass"): [str]})
+async def ws_arm(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Arm from the panel. Faulted sensors come back as `{needs_bypass: [...]}` (not an error) so the panel can ask
+    the person to confirm; resending with `bypass` set to those ids arms with them left out until disarm."""
+    try:
+        await call(api.async_arm, msg["mode"], msg.get("bypass") or None, "app")
+    except api.NeedsBypass as err:
+        return {"needs_bypass": err.faulted}
+    return {"needs_bypass": []}
+
+
 # --- People and codes -------------------------------------------------------
 
 
@@ -577,7 +592,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
-    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update,
+    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update, ws_arm,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,

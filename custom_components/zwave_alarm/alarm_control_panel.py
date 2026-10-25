@@ -18,6 +18,8 @@ the contract's "Failure handling" section (FR-006).
 from __future__ import annotations
 
 import logging
+
+import voluptuous as vol
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -33,6 +35,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
+from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -40,9 +43,11 @@ import zwave_alarm_client as api
 from .const import CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .coordinator_state import StreamState, merge_panel
-from .panel_state import map_panel_mode, panel_attributes
+from .panel_state import describe_faulted, map_panel_mode, panel_attributes
 
 _LOGGER = logging.getLogger(__name__)
+
+SERVICE_ARM = "arm"
 
 
 async def async_setup_entry(
@@ -51,6 +56,17 @@ async def async_setup_entry(
     """Set up the alarm_control_panel entity for a config entry."""
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([ZwaveAlarmControlPanel(coordinator, entry)])
+    # Arms with an explicit bypass list, e.g. to confirm the sensors an earlier arm was refused for.
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_ARM,
+        {
+            vol.Required("mode"): vol.In(["armed_home", "armed_away"]),
+            vol.Optional("bypass", default=list): vol.All(cv.ensure_list, [cv.string]),
+            vol.Optional("source"): vol.In(["app", "keypad", "lock", "schedule", "alexa"]),
+        },
+        "async_arm_with_bypass",
+    )
 
 
 class ZwaveAlarmControlPanel(
@@ -112,6 +128,12 @@ class ZwaveAlarmControlPanel(
         """Arm home via `POST /api/v1/panel/arm`."""
         await self._async_call(api.async_arm, mode="armed_home")
 
+    async def async_arm_with_bypass(
+        self, mode: str, bypass: list[str] | None = None, source: str | None = None
+    ) -> None:
+        """`zwave_alarm.arm`: arm with sensors bypassed for this session. Refused with the faulted list when others need it."""
+        await self._async_call(api.async_arm, mode=mode, bypass=bypass or None, source=source)
+
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm via `POST /api/v1/panel/disarm`; a code is always required."""
         if not code:
@@ -133,6 +155,12 @@ class ZwaveAlarmControlPanel(
             panel = await func(
                 session, self._host, self._port, None, secure=self._secure, **kwargs
             )
+        except api.NeedsBypass as err:  # a Conflict subclass; the generic handlers below must not see it
+            raise ServiceValidationError(
+                "These sensors are faulted: "
+                f"{describe_faulted(err.faulted)}. Fix them, or arm with the zwave_alarm.arm action and "
+                "list their ids under bypass to leave them out until you disarm."
+            ) from err
         except api.InvalidAuth as err:
             raise ServiceValidationError(
                 "The Z-Wave Alarm service rejected the code."
