@@ -48,6 +48,8 @@ from .panel_state import describe_faulted, map_panel_mode, panel_attributes
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_ARM = "arm"
+SERVICE_PANIC = "panic"
+SERVICE_SILENCE = "silence"
 
 
 async def async_setup_entry(
@@ -67,6 +69,15 @@ async def async_setup_entry(
         },
         "async_arm_with_bypass",
     )
+    platform.async_register_entity_service(
+        SERVICE_PANIC,
+        {
+            vol.Required("type"): vol.All(vol.Lower, vol.In(["panic", "fire", "medical", "sos"])),
+            vol.Optional("service"): vol.In(["police", "fire", "medical"]),
+        },
+        "async_panic",
+    )
+    platform.async_register_entity_service(SERVICE_SILENCE, {}, "async_silence")
 
 
 class ZwaveAlarmControlPanel(
@@ -133,6 +144,14 @@ class ZwaveAlarmControlPanel(
     ) -> None:
         """`zwave_alarm.arm`: arm with sensors bypassed for this session. Refused with the faulted list when others need it."""
         await self._async_call(api.async_arm, mode=mode, bypass=bypass or None, source=source)
+
+    async def async_panic(self, type: str, service: str | None = None) -> None:
+        """`zwave_alarm.panic`: raise a real PANIC, FIRE, MEDICAL or SOS alarm (`service` only matters for SOS)."""
+        await self.coordinator.async_panic(type.upper(), service)
+
+    async def async_silence(self) -> None:
+        """`zwave_alarm.silence`: mute the sounding sirens; the alarm stays open. Refused when none is sounding."""
+        await self.coordinator.async_silence()
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm via `POST /api/v1/panel/disarm`; a code is always required."""

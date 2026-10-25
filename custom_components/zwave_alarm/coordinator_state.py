@@ -49,6 +49,9 @@ class StreamState:
     # Per armed mode entry/exit delay, `{"armed_home": {"entryDelaySec": 60, "exitDelaySec": 60}, "armed_away": {...}}`
     # (server 3.0.0+); the snapshot's `modes` is absent on older services, which leaves this unset.
     modes: dict[str, dict[str, int]] | None = None
+    # AlarmEvent dicts that are still open (`endedAt` null), oldest first. The snapshot's `alarmEvents` is absent on a
+    # service older than 3.2.0, which leaves this empty.
+    alarm_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -89,7 +92,16 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             locks=event.get("locks") or [],
             keypad_settings=event.get("keypadSettings"),
             modes=event.get("modes"),
+            alarm_events=[e for e in event.get("alarmEvents") or [] if e.get("endedAt") is None],
         )
+
+    if event_type == "alarm.event":
+        # Sent on creation and on every change; an event that ended is no longer open.
+        changed = event["event"]
+        others = [e for e in state.alarm_events if e["id"] != changed["id"]]
+        if changed.get("endedAt") is not None:
+            return replace(state, alarm_events=others)
+        return replace(state, alarm_events=sorted([*others, changed], key=lambda e: e["startedAt"]))
 
     if event_type == "keypad.settings":
         return replace(state, keypad_settings=event["settings"])

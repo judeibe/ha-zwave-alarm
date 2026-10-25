@@ -457,3 +457,34 @@ describe("arming", () => {
     expect(screen.queryByRole("button", { name: "Arm home" })).not.toBeInTheDocument();
   });
 });
+
+describe("alarm events", () => {
+  const event = { id: "e1", type: "BURGLARY", service: null, triggerDeviceId: "s1", startedAt: 1, sirenState: "sounding", dispatchState: "held" } as const;
+
+  it("lists open events and silences a sounding siren", async () => {
+    const { call, user } = setup("/", {}, { ...OVERVIEW, alarm_events: [event] }, { silence: { silenced: [] } });
+    expect(await screen.findByText("Burglary")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Silence siren" }));
+    expect(call).toHaveBeenCalledWith("silence");
+  });
+
+  it("offers no silence button once the siren is silenced", async () => {
+    setup("/", {}, { ...OVERVIEW, alarm_events: [{ ...event, sirenState: "silenced" }] });
+    await screen.findByText("Burglary");
+    expect(screen.queryByRole("button", { name: "Silence siren" })).not.toBeInTheDocument();
+  });
+
+  it("asks before raising a panic alarm and sends nothing when declined", async () => {
+    const { call, user } = setup("/");
+    await user.click(await screen.findByRole("button", { name: "Fire" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(call).not.toHaveBeenCalledWith("panic", expect.anything());
+  });
+
+  it("raises the alarm once confirmed", async () => {
+    const { call, user } = setup("/");
+    await user.click(await screen.findByRole("button", { name: "Medical" }));
+    await user.click(await screen.findByRole("button", { name: "Raise medical alarm" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("panic", { kind: "MEDICAL" }));
+  });
+});

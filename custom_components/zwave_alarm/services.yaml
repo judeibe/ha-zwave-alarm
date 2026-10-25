@@ -234,3 +234,35 @@ arm:
             - schedule
             - alexa
           translation_key: arm_source
+panic:
+  target:
+    entity:
+      integration: zwave_alarm
+      domain: alarm_control_panel
+  fields:
+    type:
+      required: true
+      example: panic
+      selector:
+        select:
+          options:
+            - panic
+            - fire
+            - medical
+            - sos
+          translation_key: panic_type
+    service:
+      required: false
+      example: police
+      selector:
+        select:
+          options:
+            - police
+            - fire
+            - medical
+          translation_key: panic_service
+silence:
+  target:
+    entity:
+      integration: zwave_alarm
+      domain: alarm_control_panel

@@ -18,6 +18,15 @@ export interface FaultedSensor {
   zoneId: string;
   reason: FaultReason;
 }
+export interface AlarmEvent {
+  id: string;
+  type: "BURGLARY" | "SMOKE" | "CO" | "PANIC" | "FIRE_MEDICAL" | "DURESS" | "SOS" | "FLOOD_FREEZE";
+  service: "police" | "fire" | "medical" | null;
+  triggerDeviceId: string | null;
+  startedAt: number;
+  sirenState: "none" | "sounding" | "silenced" | "timed_out" | "stopped";
+  dispatchState: "none" | "held" | "queued" | "cancelled";
+}
 export interface Sensor {
   id: string;
   zwaveNodeId: number;
@@ -146,6 +155,8 @@ export interface Overview {
   keypad_settings: KeypadSettings | null;
   /** Null until the first snapshot, or when the service predates per-mode delays (3.0.0). */
   modes: Modes | null;
+  /** Alarm events that are still open, oldest first; absent from a service older than 3.2.0. */
+  alarm_events?: AlarmEvent[];
   /** Enrolled locks only. */
   locks: Lock[];
   /** Paired to the Z-Wave controller but not enrolled: offered for enrolment, never shown as devices. */

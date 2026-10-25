@@ -135,6 +135,29 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "keypad.settings", "settings": settings}))
 
+    @callback
+    def _publish_alarm_event(self, event: dict[str, Any]) -> None:
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "alarm.event", "event": event}))
+
+    async def async_panic(self, kind: str, service: str | None = None) -> dict[str, Any]:
+        """Raise a PANIC, FIRE, MEDICAL or SOS alarm via `POST /api/v1/panel/panic` and publish the new event at once."""
+        event = await self._call_client(
+            api.async_panic(self._session, self._host, self._port, None, kind, service, secure=self._secure), "panic"
+        )
+        self._publish_alarm_event(event)
+        return event
+
+    async def async_silence(self) -> list[dict[str, Any]]:
+        """Mute every sounding siren via `POST /api/v1/panel/silence`; the alarm stays open. Refused when nothing sounds."""
+        result = await self._call_client(
+            api.async_silence(self._session, self._host, self._port, None, secure=self._secure), "silence"
+        )
+        silenced = result["silenced"]
+        for event in silenced:
+            self._publish_alarm_event(event)
+        return silenced
+
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
         modes = await self._call_client(

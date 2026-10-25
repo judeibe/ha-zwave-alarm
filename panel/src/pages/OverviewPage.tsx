@@ -68,6 +68,7 @@ export function OverviewPage() {
         </>
       )}
       {!zones.length && <Hint>No zones yet. Create one under Zones, then assign your Z-Wave sensors to it.</Hint>}
+      <AlarmSection />
       <ArmSection />
       <ModeDelaysSection />
     </section>
@@ -162,6 +163,58 @@ export function ArmSection() {
         <Button variant="primary" onClick={() => arm("armed_away")}>
           Arm away
         </Button>
+      </div>
+    </>
+  );
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  BURGLARY: "Burglary", SMOKE: "Smoke", CO: "Carbon monoxide", PANIC: "Panic", FIRE_MEDICAL: "Fire or medical",
+  DURESS: "Duress", SOS: "SOS", FLOOD_FREEZE: "Flood or freeze",
+};
+const PANICS = [
+  { kind: "PANIC", label: "Panic", note: "sounds the siren and requests police" },
+  { kind: "FIRE", label: "Fire", note: "sounds the siren and requests the fire service" },
+  { kind: "MEDICAL", label: "Medical", note: "requests medical help (no siren)" },
+] as const;
+
+/** Open alarm events, a button to mute a sounding siren, and panic buttons (each asks first: they raise a real alarm). */
+export function AlarmSection() {
+  const api = useApi();
+  const confirm = useConfirm();
+  const { alarm_events: events = [] } = useOverview();
+  const { run, error } = useAction();
+  const sounding = events.some((e) => e.sirenState === "sounding");
+  const panic = async (p: (typeof PANICS)[number]) => {
+    if (await confirm({ title: `Raise a ${p.label.toLowerCase()} alarm?`, message: `This is real: it ${p.note}.`, confirmLabel: `Raise ${p.label.toLowerCase()} alarm` })) {
+      await run(() => api.call("panic", { kind: p.kind }), { done: `${p.label} alarm raised` });
+    }
+  };
+  return (
+    <>
+      <ErrorBanner message={error} />
+      {events.length > 0 && (
+        <>
+          <SectionTitle>Alarm</SectionTitle>
+          <InsetList label="Open alarm events">
+            {events.map((e) => (
+              <ListRow key={e.id} icon="alert" title={EVENT_LABEL[e.type] ?? e.type} subtitle={`Siren ${e.sirenState.replace("_", " ")} · dispatch ${e.dispatchState}`} trailing={<Pill tone="alert">open</Pill>} />
+            ))}
+          </InsetList>
+          {sounding && (
+            <Button className="mt-3 w-full" onClick={() => run(() => api.call("silence"), { done: "Siren silenced" })}>
+              Silence siren
+            </Button>
+          )}
+        </>
+      )}
+      <SectionTitle>Emergency</SectionTitle>
+      <div className="grid grid-cols-3 gap-3">
+        {PANICS.map((p) => (
+          <Button key={p.kind} variant="danger" onClick={() => panic(p)}>
+            {p.label}
+          </Button>
+        ))}
       </div>
     </>
   );

@@ -29,6 +29,7 @@ from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .alarm_event_state import siren_sounding
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
@@ -64,6 +65,7 @@ async def async_setup_entry(
 
     _add_new_zones()
     entry.async_on_unload(coordinator.async_add_listener(_add_new_zones))
+    async_add_entities([ZwaveAlarmSirenSoundingSensor(coordinator, entry)])
 
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadConnectivitySensor(c, e, keypad)]
@@ -163,3 +165,22 @@ class ZwaveAlarmLockConnectivitySensor(ZwaveAlarmLockEntity, BinarySensorEntity)
     def is_on(self) -> bool | None:
         lock = self._lock()
         return lock_is_online(lock) if lock is not None else None
+
+
+class ZwaveAlarmSirenSoundingSensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
+    """On while an open alarm event has its siren sounding; off once it is silenced, times out or the alarm ends."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "siren_sounding"
+    _attr_device_class = BinarySensorDeviceClass.SOUND
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_siren_sounding"
+        # Explicit, like the zone and fault-count entities, so the id does not depend on how HA slugs the device name.
+        self.entity_id = async_generate_entity_id(ENTITY_ID_FORMAT, "zwave_alarm_siren_sounding", hass=coordinator.hass)
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def is_on(self) -> bool | None:
+        return siren_sounding(self.coordinator.data.alarm_events) if self.coordinator.data is not None else None
