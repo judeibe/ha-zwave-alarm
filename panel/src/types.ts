@@ -46,6 +46,30 @@ export interface GuestSchedule {
   end: string | null;
   timeZone: string | null;
 }
+export type ScheduleMode = "disarmed" | "armed_home" | "armed_away";
+/** Switches the alarm to a mode at a time of day on chosen days. */
+export interface ModeSchedule {
+  id: string;
+  name: string;
+  mode: ScheduleMode;
+  time: string;
+  days: Weekday[];
+  enabled: boolean;
+  timeZone: string | null;
+  lastRunAt: number | null;
+}
+/** One entry of the alarm's history. `details` never contains a code. */
+export interface HistoryEvent {
+  id: string;
+  type: string;
+  source: string;
+  sourceUserId: string | null;
+  details: string | null;
+  occurredAt: number;
+  actor: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+}
 export interface Sensor {
   id: string;
   zwaveNodeId: number;
@@ -184,6 +208,8 @@ export interface Overview {
   alarm_events?: AlarmEvent[];
   /** Enrolled sirens; absent from a service older than 3.3.0. */
   sirens?: Siren[];
+  /** Mode schedules; absent from a service older than 3.6.0. */
+  mode_schedules?: ModeSchedule[];
   /** Enrolled locks only. */
   locks: Lock[];
   /** Paired to the Z-Wave controller but not enrolled: offered for enrolment, never shown as devices. */

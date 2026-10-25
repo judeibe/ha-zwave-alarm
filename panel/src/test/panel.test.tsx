@@ -645,3 +645,92 @@ describe("guest schedules", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/rejected the request/);
   });
 });
+
+describe("history", () => {
+  const ev = (n: number, extra = {}) => ({ id: `e${n}`, type: "tamper", source: "system", sourceUserId: null, details: "Cover removed", occurredAt: 1700000000000 + n, actor: null, deviceId: "s1", deviceName: "Front door", ...extra });
+
+  it("lists events with the device, who did it and the details", async () => {
+    setup("/history", {}, OVERVIEW, { events: [ev(1), ev(2, { id: "e2", type: "code_changed", actor: "Alex", details: "Alex's code", deviceId: null, deviceName: null })] });
+    expect(await screen.findByText("tamper")).toBeInTheDocument();
+    expect(screen.getByText(/Front door · Cover removed/)).toBeInTheDocument();
+    expect(screen.getByText(/by Alex · Alex's code/)).toBeInTheDocument();
+  });
+
+  it("asks for the first page, then filters by kind and device", async () => {
+    const { call, user } = setup("/history", {}, OVERVIEW, { events: [ev(1)] });
+    await screen.findByText("tamper");
+    expect(call).toHaveBeenCalledWith("events", { limit: 50 });
+    await user.selectOptions(screen.getByLabelText("Kind"), "Codes");
+    await waitFor(() => expect(call).toHaveBeenCalledWith("events", expect.objectContaining({ event_type: expect.arrayContaining(["code_added", "duress_code_set"]) })));
+    await user.selectOptions(screen.getByLabelText("Device"), "Front door");
+    await waitFor(() => expect(call).toHaveBeenCalledWith("events", expect.objectContaining({ device_id: "s1" })));
+  });
+
+  it("pages older events with the id of the oldest one shown", async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ev(i, { id: `e${i}` }));
+    const { call, user } = setup("/history", {}, OVERVIEW, { events: full });
+    await user.click(await screen.findByRole("button", { name: "Load older" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("events", { limit: 50, before: "e49" }));
+  });
+
+  it("offers no older page when the first one is short", async () => {
+    setup("/history", {}, OVERVIEW, { events: [ev(1)] });
+    await screen.findByText("tamper");
+    expect(screen.queryByRole("button", { name: "Load older" })).not.toBeInTheDocument();
+  });
+
+  it("says when nothing matches, and shows a load failure", async () => {
+    setup("/history", {}, OVERVIEW, { events: [] });
+    expect(await screen.findByText("Nothing here")).toBeInTheDocument();
+    document.body.replaceChildren();
+    setup("/history", { events: "cannot_connect" });
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+});
+
+describe("mode schedules", () => {
+  const night = { id: "m1", name: "Night", mode: "armed_home" as const, time: "22:00", days: ["mon", "tue"] as const, enabled: true, timeZone: "America/Chicago", lastRunAt: null };
+  const withNight = { ...OVERVIEW, mode_schedules: [{ ...night, days: [...night.days] }] };
+
+  it("lists schedules with mode, time, days and zone", async () => {
+    setup("/schedules", {}, withNight);
+    expect(await screen.findByText("Night")).toBeInTheDocument();
+    expect(screen.getByText("Arm home at 22:00 · Mon, Tue · America/Chicago")).toBeInTheDocument();
+  });
+
+  it("explains an older service without mode schedules", async () => {
+    setup("/schedules");
+    expect(await screen.findByText(/3\.6\.0/)).toBeInTheDocument();
+  });
+
+  it("turns a schedule off", async () => {
+    const { call, user } = setup("/schedules", {}, withNight);
+    await user.click(await screen.findByRole("switch", { name: "Night enabled" }));
+    expect(call).toHaveBeenCalledWith("mode_schedule/update", { schedule_id: "m1", enabled: false });
+  });
+
+  it("adds a schedule once it has a name and a day", async () => {
+    const { call, user } = setup("/schedules", {}, { ...OVERVIEW, mode_schedules: [] });
+    expect(await screen.findByRole("button", { name: "Add schedule" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Schedule name"), "Morning");
+    await user.selectOptions(screen.getByLabelText("Mode"), "Disarm");
+    await user.click(screen.getByRole("button", { name: "Mon" }));
+    await user.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(call).toHaveBeenCalledWith("mode_schedule/create", { name: "Morning", mode: "disarmed", time: "22:00", days: ["mon"] });
+  });
+
+  it("explains a clashing schedule", async () => {
+    const { user } = setup("/schedules", { "mode_schedule/create": "schedule_conflict" }, { ...OVERVIEW, mode_schedules: [] });
+    await user.type(await screen.findByLabelText("Schedule name"), "x");
+    await user.click(screen.getByRole("button", { name: "Tue" }));
+    await user.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/same time/);
+  });
+
+  it("removes a schedule once confirmed", async () => {
+    const { call, user } = setup("/schedules", {}, withNight);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(confirmDialog().getByRole("button", { name: "Remove schedule" }));
+    expect(call).toHaveBeenCalledWith("mode_schedule/delete", { schedule_id: "m1" });
+  });
+});

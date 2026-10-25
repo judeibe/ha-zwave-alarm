@@ -486,3 +486,139 @@ remove_guest_schedule:
       required: true
       selector:
         text:
+get_history:
+  fields:
+    event_type:
+      required: false
+      example: "[tamper, code_changed]"
+      selector:
+        object:
+    device_id:
+      required: false
+      selector:
+        text:
+    user_id:
+      required: false
+      selector:
+        text:
+    since:
+      required: false
+      selector:
+        datetime:
+    until:
+      required: false
+      selector:
+        datetime:
+    before:
+      required: false
+      selector:
+        text:
+    limit:
+      required: false
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+list_mode_schedules:
+add_mode_schedule:
+  fields:
+    name:
+      required: true
+      example: Night
+      selector:
+        text:
+    mode:
+      required: true
+      example: armed_home
+      selector:
+        select:
+          options:
+            - disarmed
+            - armed_home
+            - armed_away
+          translation_key: schedule_mode
+    time:
+      required: true
+      example: "22:00"
+      selector:
+        time:
+    days:
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: guest_weekday
+    enabled:
+      required: false
+      selector:
+        boolean:
+    time_zone:
+      required: false
+      example: America/Chicago
+      selector:
+        text:
+update_mode_schedule:
+  fields:
+    schedule_id:
+      required: true
+      selector:
+        text:
+    name:
+      required: false
+      example: Night
+      selector:
+        text:
+    mode:
+      required: false
+      example: armed_home
+      selector:
+        select:
+          options:
+            - disarmed
+            - armed_home
+            - armed_away
+          translation_key: schedule_mode
+    time:
+      required: false
+      example: "22:00"
+      selector:
+        time:
+    days:
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: guest_weekday
+    enabled:
+      required: false
+      selector:
+        boolean:
+    time_zone:
+      required: false
+      example: America/Chicago
+      selector:
+        text:
+remove_mode_schedule:
+  fields:
+    schedule_id:
+      required: true
+      selector:
+        text:

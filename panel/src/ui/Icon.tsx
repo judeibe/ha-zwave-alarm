@@ -13,6 +13,8 @@ const PATHS = {
   locks: "M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3M12 15v2",
   keypad: "M5 3h14v18H5zM9 7h.01M12 7h.01M15 7h.01M9 11h.01M12 11h.01M15 11h.01M9 15h.01M12 15h.01M15 15h.01",
   battery: "M2 8.5h16v7H2zM20 11v2",
+  history: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2",
+  schedule: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4M12 13v3l2 1",
 } as const;
 
 export type IconName = keyof typeof PATHS;

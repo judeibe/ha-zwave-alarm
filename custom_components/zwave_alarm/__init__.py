@@ -30,10 +30,17 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
 from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
-from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_schedule, schedule_fields
+from .guest_schedule_state import (
+    GUEST_WEEKDAYS,
+    InvalidSchedule,
+    check_mode_schedule,
+    check_schedule,
+    schedule_fields,
+)
 from .keypad import keypad_device_identifier
 from .lock_state import (
     CLIENT_SCHEDULE_KINDS,
@@ -108,6 +115,37 @@ UPDATE_GUEST_SCHEDULE_SCHEMA = vol.Schema(
     }
 )
 GUEST_SCHEDULE_ID_SCHEMA = vol.Schema({vol.Required("user_id"): cv.string, vol.Required("schedule_id"): cv.string})
+
+SERVICE_GET_HISTORY = "get_history"
+SERVICE_LIST_MODE_SCHEDULES = "list_mode_schedules"
+SERVICE_ADD_MODE_SCHEDULE = "add_mode_schedule"
+SERVICE_UPDATE_MODE_SCHEDULE = "update_mode_schedule"
+SERVICE_REMOVE_MODE_SCHEDULE = "remove_mode_schedule"
+_MODE = vol.In(["disarmed", "armed_home", "armed_away"])
+_MODE_SCHEDULE_FIELDS = {
+    vol.Optional("name"): cv.string,
+    vol.Optional("mode"): _MODE,
+    vol.Optional("time"): cv.time,
+    vol.Optional("days"): _GUEST_DAYS,
+    vol.Optional("enabled"): cv.boolean,
+    vol.Optional("time_zone"): cv.string,
+}
+ADD_MODE_SCHEDULE_SCHEMA = vol.Schema(
+    {**_MODE_SCHEDULE_FIELDS, vol.Required("name"): cv.string, vol.Required("mode"): _MODE, vol.Required("time"): cv.time, vol.Required("days"): _GUEST_DAYS}
+)
+UPDATE_MODE_SCHEDULE_SCHEMA = vol.Schema({**_MODE_SCHEDULE_FIELDS, vol.Required("schedule_id"): cv.string})
+REMOVE_MODE_SCHEDULE_SCHEMA = vol.Schema({vol.Required("schedule_id"): cv.string})
+GET_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Optional("event_type"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("user_id"): cv.string,
+        vol.Optional("since"): cv.datetime,
+        vol.Optional("until"): cv.datetime,
+        vol.Optional("before"): cv.string,
+        vol.Optional("limit"): vol.All(vol.Coerce(int), vol.Range(min=1, max=500)),
+    }
+)
 
 SERVICE_SET_LOCK_SCHEDULE = "set_lock_schedule"
 SERVICE_CLEAR_LOCK_SCHEDULE = "clear_lock_schedule"
@@ -321,7 +359,59 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def _remove_guest_schedule(call: ServiceCall) -> None:
         await _only_coordinator().async_delete_guest_schedule(call.data["user_id"], call.data["schedule_id"])
 
+    def _mode_schedule_fields(call: ServiceCall) -> dict[str, Any]:
+        fields = {k: v for k, v in call.data.items() if k in ("name", "mode", "time", "days", "enabled", "time_zone")}
+        if "time" in fields:
+            fields["time"] = fields["time"].strftime("%H:%M")
+        try:
+            check_mode_schedule(fields.get("mode"), fields.get("time"), fields.get("days"))
+        except InvalidSchedule as err:
+            raise ServiceValidationError(str(err)) from err
+        return fields
+
+    async def _get_history(call: ServiceCall) -> ServiceResponse:
+        filters: dict[str, Any] = {k: call.data[k] for k in ("device_id", "user_id", "before", "limit") if k in call.data}
+        if "event_type" in call.data:
+            filters["type"] = call.data["event_type"]
+        for key in ("since", "until"):
+            if key in call.data:
+                filters[key] = int(dt_util.as_utc(call.data[key]).timestamp() * 1000)
+        return {"events": await _only_coordinator().async_get_events(**filters)}
+
+    async def _list_mode_schedules(call: ServiceCall) -> ServiceResponse:
+        return {"schedules": await _only_coordinator().async_get_mode_schedules()}
+
+    async def _add_mode_schedule(call: ServiceCall) -> ServiceResponse:
+        f = _mode_schedule_fields(call)
+        return await _only_coordinator().async_create_mode_schedule(
+            f["name"], f["mode"], f["time"], f["days"], f.get("enabled"), f.get("time_zone")
+        )
+
+    async def _update_mode_schedule(call: ServiceCall) -> ServiceResponse:
+        fields = _mode_schedule_fields(call)
+        if not fields:
+            raise ServiceValidationError("Change at least one field.")
+        return await _only_coordinator().async_update_mode_schedule(call.data["schedule_id"], **fields)
+
+    async def _remove_mode_schedule(call: ServiceCall) -> None:
+        await _only_coordinator().async_delete_mode_schedule(call.data["schedule_id"])
+
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_GET_HISTORY, _get_history, GET_HISTORY_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_LIST_MODE_SCHEDULES, _list_mode_schedules, vol.Schema({}), supports_response=SupportsResponse.ONLY
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_ADD_MODE_SCHEDULE, _add_mode_schedule, ADD_MODE_SCHEDULE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_UPDATE_MODE_SCHEDULE, _update_mode_schedule, UPDATE_MODE_SCHEDULE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    async_register_admin_service(hass, DOMAIN, SERVICE_REMOVE_MODE_SCHEDULE, _remove_mode_schedule, REMOVE_MODE_SCHEDULE_SCHEMA)
     async_register_admin_service(
         hass, DOMAIN, SERVICE_LIST_GUEST_SCHEDULES, _list_guest_schedules, USER_ID_SCHEMA, supports_response=SupportsResponse.ONLY
     )

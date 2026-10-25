@@ -219,8 +219,37 @@ def test_security_event_payload_exposes_details_for_cleared_by() -> None:
 
     assert security_event_payload(event) == (
         "alarm_cleared",
-        {"event_id": "e1", "occurred_at": 5, "details": "Cleared by Owner"},
+        {"event_id": "e1", "occurred_at": 5, "details": "Cleared by Owner", "actor": None, "device_id": None, "device_name": None},
     )
+
+
+def test_security_event_payload_carries_who_and_which_device() -> None:
+    event = {
+        "type": "event.recorded",
+        "event": {"id": "e2", "type": "tamper", "occurredAt": 6, "details": "Cover removed", "actor": "Alex",
+                  "deviceId": "s1", "deviceName": "Front door"},
+    }
+    _, attrs = security_event_payload(event)
+    assert (attrs["actor"], attrs["device_id"], attrs["device_name"]) == ("Alex", "s1", "Front door")
+
+
+_SCHEDULE = {"id": "m1", "name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon"], "enabled": True, "timeZone": None, "lastRunAt": None}
+
+
+def test_snapshot_carries_mode_schedules_and_the_stream_changes_them() -> None:
+    state = apply_event(
+        StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": [], "modeSchedules": [_SCHEDULE]}
+    )
+    assert state.mode_schedules == [_SCHEDULE]
+    state = apply_event(state, {"type": "mode-schedule.changed", "schedule": {**_SCHEDULE, "enabled": False}})
+    state = apply_event(state, {"type": "mode-schedule.changed", "schedule": {**_SCHEDULE, "id": "m2", "name": "Morning", "time": "06:30"}})
+    assert [(x["id"], x["enabled"]) for x in state.mode_schedules] == [("m2", True), ("m1", False)]  # by time of day
+    assert [x["id"] for x in apply_event(state, {"type": "mode-schedule.removed", "id": "m2"}).mode_schedules] == ["m1"]
+
+
+def test_a_snapshot_from_an_older_service_has_no_mode_schedules() -> None:
+    state = apply_event(StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []})
+    assert state.mode_schedules == []
 
 
 def test_next_backoff_doubles_from_base_up_to_cap() -> None:

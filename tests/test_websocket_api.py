@@ -718,3 +718,56 @@ async def test_guest_schedule_update_sends_only_the_changed_fields(hass, hass_ws
     assert update.await_args.args[-2:] == ("g1", "s1") and update.await_args.kwargs["all_day"] is False
     resp = await _send(await hass_ws_client(hass), "guest_schedule/update", user_id="g1", schedule_id="s1")
     assert not resp["success"]
+
+
+async def test_events_command_maps_filters_to_the_client(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_get_events", AsyncMock(return_value=[{"id": "e1"}])) as get:
+        resp = await _send(
+            await hass_ws_client(hass), "events", event_type=["tamper", "code_added"], device_id="s1", before="e9", limit=50, since=5
+        )
+    assert resp["result"] == [{"id": "e1"}]
+    assert get.await_args.kwargs == {"type": ["tamper", "code_added"], "device_id": "s1", "before": "e9", "limit": 50, "since": 5, "secure": False}
+
+
+@pytest.mark.parametrize("payload", [{"limit": 0}, {"limit": 501}, {"since": -1}])
+async def test_events_command_rejects_bad_limits(hass, hass_ws_client, entry, payload) -> None:
+    with patch(f"{API}.async_get_events", AsyncMock()) as get:
+        resp = await _send(await hass_ws_client(hass), "events", **payload)
+    assert not resp["success"]
+    get.assert_not_awaited()
+
+
+async def test_mode_schedule_create_trims_the_time_and_goes_through_the_coordinator(hass, hass_ws_client, entry) -> None:
+    create = AsyncMock(return_value={"id": "m1"})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_create_mode_schedule=create, data=None)
+    resp = await _send(await hass_ws_client(hass), "mode_schedule/create", name="Night", mode="armed_home", time="22:00:00", days=["mon"])
+    assert resp["result"] == {"id": "m1"}
+    create.assert_awaited_once_with("Night", "armed_home", "22:00", ["mon"], None, None)
+
+
+@pytest.mark.parametrize("payload", [{"mode": "armed_night"}, {"days": []}, {"time": "10pm"}])
+async def test_mode_schedule_create_rejects_a_bad_schedule(hass, hass_ws_client, entry, payload) -> None:
+    create = AsyncMock()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_create_mode_schedule=create, data=None)
+    body = {"name": "Night", "mode": "armed_home", "time": "22:00", "days": ["mon"], **payload}
+    resp = await _send(await hass_ws_client(hass), "mode_schedule/create", **body)
+    assert not resp["success"]
+    create.assert_not_awaited()
+
+
+async def test_mode_schedule_conflict_has_its_own_error_code(hass, hass_ws_client, entry) -> None:
+    update = AsyncMock(side_effect=api.ScheduleConflict("clash", "m2"))
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_update_mode_schedule=update, data=None)
+    resp = await _send(await hass_ws_client(hass), "mode_schedule/update", schedule_id="m1", enabled=True)
+    assert resp["error"]["code"] == "schedule_conflict"
+
+
+async def test_mode_schedule_list_and_delete(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_get_mode_schedules", AsyncMock(return_value=[{"id": "m1"}])):
+        resp = await _send(await hass_ws_client(hass), "mode_schedule/list")
+    assert resp["result"] == [{"id": "m1"}]
+    delete = AsyncMock(return_value=None)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_delete_mode_schedule=delete, data=None)
+    resp = await _send(await hass_ws_client(hass), "mode_schedule/delete", schedule_id="m1")
+    assert resp["success"]
+    delete.assert_awaited_once_with("m1")

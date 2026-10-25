@@ -551,6 +551,118 @@
           "description": "The id of the schedule (from list_guest_schedules)."
         }
       }
+    },
+    "get_history": {
+      "name": "Get history",
+      "description": "Returns the alarm's history, newest first, with who did it and which device it concerned. Administrators only. Codes are never part of an entry.",
+      "fields": {
+        "event_type": {
+          "name": "Event types",
+          "description": "Only these kinds, for example tamper or code_changed."
+        },
+        "device_id": {
+          "name": "Device id",
+          "description": "Only events about this device."
+        },
+        "user_id": {
+          "name": "User id",
+          "description": "Only events caused by this user."
+        },
+        "since": {
+          "name": "Since",
+          "description": "Only events at or after this time."
+        },
+        "until": {
+          "name": "Until",
+          "description": "Only events before this time."
+        },
+        "before": {
+          "name": "Before",
+          "description": "Event id to page from: returns events older than it."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "How many to return, 1 to 500."
+        }
+      }
+    },
+    "list_mode_schedules": {
+      "name": "List mode schedules",
+      "description": "Returns the schedules that switch the alarm's mode at set times. Administrators only."
+    },
+    "add_mode_schedule": {
+      "name": "Add mode schedule",
+      "description": "Switches the alarm to a mode at a time on chosen days. Arming this way bypasses faulted sensors and is logged as done by the schedule. Refused if another enabled schedule would run at the same time. Administrators only.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "What to call the schedule."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "The mode to switch to."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it runs, in the schedule's time zone."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Days of the week it runs, at least one."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether it runs. Defaults to on."
+        },
+        "time_zone": {
+          "name": "Time zone",
+          "description": "IANA time zone the time is in. Defaults to Home Assistant's, because the service may run in UTC."
+        }
+      }
+    },
+    "update_mode_schedule": {
+      "name": "Update mode schedule",
+      "description": "Changes a mode schedule; only the fields you pass change. Pass enabled to turn it on or off. Administrators only.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "What to call the schedule."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "The mode to switch to."
+        },
+        "time": {
+          "name": "Time",
+          "description": "When it runs, in the schedule's time zone."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Days of the week it runs, at least one."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether it runs. Defaults to on."
+        },
+        "time_zone": {
+          "name": "Time zone",
+          "description": "IANA time zone the time is in. Defaults to Home Assistant's, because the service may run in UTC."
+        },
+        "schedule_id": {
+          "name": "Schedule id",
+          "description": "The id of the schedule (from list_mode_schedules)."
+        }
+      }
+    },
+    "remove_mode_schedule": {
+      "name": "Remove mode schedule",
+      "description": "Deletes a mode schedule. Administrators only.",
+      "fields": {
+        "schedule_id": {
+          "name": "Schedule id",
+          "description": "The id of the schedule (from list_mode_schedules)."
+        }
+      }
     }
   },
   "selector": {
@@ -627,6 +739,13 @@
         "fri": "Friday",
         "sat": "Saturday",
         "sun": "Sunday"
+      }
+    },
+    "schedule_mode": {
+      "options": {
+        "disarmed": "Disarmed",
+        "armed_home": "Armed home",
+        "armed_away": "Armed away"
       }
     }
   },

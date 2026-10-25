@@ -48,3 +48,16 @@ def test_schedule_fields_keeps_only_what_was_given_and_trims_times() -> None:
         "start": "08:00",
         "time_zone": "America/Chicago",
     }
+
+
+def test_check_mode_schedule_checks_only_what_is_given() -> None:
+    from guest_schedule_state import check_mode_schedule
+
+    check_mode_schedule(None, None, None)
+    check_mode_schedule("armed_home", "22:00:00", ["mon"])
+    with pytest.raises(InvalidSchedule, match="mode"):
+        check_mode_schedule("armed_night", None, None)
+    with pytest.raises(InvalidSchedule, match="Times"):
+        check_mode_schedule(None, "10pm", None)
+    with pytest.raises(InvalidSchedule, match="at least one"):
+        check_mode_schedule(None, None, [])

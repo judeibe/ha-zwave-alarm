@@ -55,6 +55,8 @@ class StreamState:
     # Enrolled Siren dicts (`nodeId`, `kind`, `name`, `durationSec`, `createdAt`); the snapshot's `sirens` is absent on a
     # service older than 3.3.0, which leaves this empty.
     sirens: list[dict[str, Any]] = field(default_factory=list)
+    # ModeSchedule dicts; the snapshot's `modeSchedules` is absent on a service older than 3.6.0, which leaves this empty.
+    mode_schedules: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -97,7 +99,16 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             modes=event.get("modes"),
             alarm_events=[e for e in event.get("alarmEvents") or [] if e.get("endedAt") is None],
             sirens=event.get("sirens") or [],
+            mode_schedules=event.get("modeSchedules") or [],
         )
+
+    if event_type == "mode-schedule.changed":
+        schedule = event["schedule"]
+        others = [x for x in state.mode_schedules if x["id"] != schedule["id"]]
+        return replace(state, mode_schedules=sorted([*others, schedule], key=lambda x: (x["time"], x["name"])))
+
+    if event_type == "mode-schedule.removed":
+        return replace(state, mode_schedules=[x for x in state.mode_schedules if x["id"] != event["id"]])
 
     if event_type == "siren.changed":
         siren = event["siren"]
@@ -200,6 +211,10 @@ def security_event_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "event_id": recorded.get("id"),
         "occurred_at": recorded.get("occurredAt"),
         "details": recorded.get("details"),
+        # Who did it and which device it concerned (service 3.6.0+; None before). Never a code.
+        "actor": recorded.get("actor"),
+        "device_id": recorded.get("deviceId"),
+        "device_name": recorded.get("deviceName"),
     }
 
 
