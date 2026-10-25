@@ -364,6 +364,13 @@ async def _entity(hass: HomeAssistant, entity_id: str):
 
 async def _settle(hass: HomeAssistant, service: FakeService) -> None:
     await asyncio.wait_for(service.connected.wait(), 5)
+    # `connected` is set as the snapshot is sent, not when it has been applied: wait for the coordinator to hold it, so
+    # the listeners that add entities (keypads, delays, sirens, ...) have run before a test looks for them.
+    for _ in range(100):
+        coordinators = list(hass.data.get(DOMAIN, {}).values())
+        if coordinators and all(c.data is not None for c in coordinators):
+            break
+        await asyncio.sleep(0.05)
     await hass.async_block_till_done()
     await asyncio.sleep(0.05)
     await hass.async_block_till_done()
