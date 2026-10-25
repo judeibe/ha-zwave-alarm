@@ -69,6 +69,7 @@ export function OverviewPage() {
       )}
       {!zones.length && <Hint>No zones yet. Create one under Zones, then assign your Z-Wave sensors to it.</Hint>}
       <AlarmSection />
+      <SirensSection />
       <ArmSection />
       <ModeDelaysSection />
     </section>
@@ -216,6 +217,39 @@ export function AlarmSection() {
           </Button>
         ))}
       </div>
+    </>
+  );
+}
+
+const KIND_LABEL = { BASE: "Base station", DOME: "Dome (indoor)", OUTDOOR: "Outdoor" } as const;
+
+/** The enrolled sirens, each with how long it sounds. Enrolling one is the `zwave_alarm.set_siren` action. */
+export function SirensSection() {
+  const api = useApi();
+  const confirm = useConfirm();
+  const { sirens = [] } = useOverview();
+  const { run, error } = useAction();
+  if (!sirens.length) return null;
+  const remove = async (name: string, nodeId: number) => {
+    if (await confirm({ title: `Remove ${name}?`, message: "It will no longer be treated as a siren.", confirmLabel: "Remove" })) {
+      await run(() => api.call("siren/delete", { node_id: nodeId }), { done: "Siren removed" });
+    }
+  };
+  return (
+    <>
+      <SectionTitle>Sirens</SectionTitle>
+      <ErrorBanner message={error} />
+      <InsetList label="Sirens">
+        {sirens.map((s) => (
+          <ListRow
+            key={s.nodeId}
+            icon="alert"
+            title={s.name}
+            subtitle={`${KIND_LABEL[s.kind]} · node ${s.nodeId} · sounds ${s.durationSec} s`}
+            trailing={<Button variant="danger" onClick={() => remove(s.name, s.nodeId)}>Remove</Button>}
+          />
+        ))}
+      </InsetList>
     </>
   );
 }

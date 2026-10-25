@@ -42,6 +42,8 @@ from .lock_state import (
     occupied_slot_count,
     occupied_slots,
 )
+from .siren import ZwaveAlarmSirenEntity, async_add_siren_entities
+from .siren_state import siren_is_configurable
 from .schlage import ZwaveAlarmLockEntity, async_add_lock_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,10 @@ async def async_setup_entry(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadBatterySensor(c, e, keypad)]
     )
     async_add_lock_entities(coordinator, entry, async_add_entities, _lock_sensors)
+    async_add_siren_entities(
+        coordinator, entry, async_add_entities,
+        lambda c, e, siren: [] if siren_is_configurable(siren) else [ZwaveAlarmSirenDurationSensor(c, e, siren)],
+    )
 
 
 def _lock_sensors(coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> list[SensorEntity]:
@@ -225,3 +231,21 @@ class ZwaveAlarmLockBootloaderSensor(ZwaveAlarmLockEntity, SensorEntity):
 
 def _snake(key: str) -> str:
     return "".join(f"_{c.lower()}" if c.isupper() else c for c in key)
+
+
+class ZwaveAlarmSirenDurationSensor(ZwaveAlarmSirenEntity, SensorEntity):
+    """How long a base or dome siren sounds: fixed at 600 s, so read-only (an outdoor siren has a number instead)."""
+
+    _attr_translation_key = "siren_duration"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_native_unit_of_measurement = "s"
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, siren: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, siren, "duration")
+        self.entity_id = async_generate_entity_id(ENTITY_ID_FORMAT, f"zwave_alarm_siren_{self._node_id}_duration", hass=coordinator.hass)
+
+    @property
+    def native_value(self) -> int | None:
+        siren = self._siren()
+        return siren.get("durationSec") if siren else None

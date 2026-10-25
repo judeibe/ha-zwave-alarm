@@ -8,13 +8,15 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .lock_state import PIN_LENGTH_MAX, PIN_LENGTH_MIN, lock_supports
+from .siren import ZwaveAlarmSirenEntity, async_add_siren_entities
+from .siren_state import OUTDOOR_MAX_SEC, OUTDOOR_MIN_SEC, siren_is_configurable
 from .schlage import ZwaveAlarmLockSettingEntity, async_add_lock_entities
 
 
@@ -27,6 +29,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         lambda c, e, lock: [ZwaveAlarmLockPinLengthNumber(c, e, lock)] if lock_supports(lock, "pinLength") else [],
     )
     _async_add_delay_numbers(coordinator, entry, async_add_entities)
+    async_add_siren_entities(
+        coordinator, entry, async_add_entities,
+        lambda c, e, siren: [ZwaveAlarmSirenDurationNumber(c, e, siren)] if siren_is_configurable(siren) else [],
+    )
 
 
 # (armed mode key in the service's `modes`, field, translation key); spec Timers: 0-180 s per mode.
@@ -111,3 +117,31 @@ class ZwaveAlarmLockPinLengthNumber(ZwaveAlarmLockSettingEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self._async_write(int(value))
+
+
+class ZwaveAlarmSirenDurationNumber(ZwaveAlarmSirenEntity, NumberEntity):
+    """How long an outdoor siren sounds, 60-600 s. Base and dome sirens are fixed at 600 s and get no number."""
+
+    _attr_translation_key = "siren_duration"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = OUTDOOR_MIN_SEC
+    _attr_native_max_value = OUTDOOR_MAX_SEC
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = "s"
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, siren: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, siren, "duration")
+        self.entity_id = async_generate_entity_id("number.{}", f"zwave_alarm_siren_{self._node_id}_duration", hass=coordinator.hass)
+
+    @property
+    def native_value(self) -> int | None:
+        siren = self._siren()
+        value = siren.get("durationSec") if siren else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        siren = self._siren()
+        if siren is not None:
+            await self.coordinator.async_put_siren(self._node_id, siren["kind"], duration_sec=int(value))

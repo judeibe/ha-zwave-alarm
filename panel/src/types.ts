@@ -27,6 +27,13 @@ export interface AlarmEvent {
   sirenState: "none" | "sounding" | "silenced" | "timed_out" | "stopped";
   dispatchState: "none" | "held" | "queued" | "cancelled";
 }
+export interface Siren {
+  nodeId: number;
+  kind: "BASE" | "DOME" | "OUTDOOR";
+  name: string;
+  durationSec: number;
+  createdAt: number;
+}
 export interface Sensor {
   id: string;
   zwaveNodeId: number;
@@ -35,6 +42,8 @@ export interface Sensor {
   category: Category;
   currentState: "normal" | "breached";
   batteryLevel?: number | null;
+  /** Cover removed or not seated; absent from a service older than 3.3.0. */
+  tampered?: boolean;
   connectivityStatus?: "online" | "offline";
   /** Null for life-safety sensors; absent on a service older than 3.0.0. */
   placement?: Placement | null;
@@ -157,6 +166,8 @@ export interface Overview {
   modes: Modes | null;
   /** Alarm events that are still open, oldest first; absent from a service older than 3.2.0. */
   alarm_events?: AlarmEvent[];
+  /** Enrolled sirens; absent from a service older than 3.3.0. */
+  sirens?: Siren[];
   /** Enrolled locks only. */
   locks: Lock[];
   /** Paired to the Z-Wave controller but not enrolled: offered for enrolment, never shown as devices. */

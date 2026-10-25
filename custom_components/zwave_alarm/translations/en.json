@@ -140,6 +140,9 @@
       },
       "away_exit_delay": {
         "name": "Away exit delay"
+      },
+      "siren_duration": {
+        "name": "Duration"
       }
     },
     "sensor": {
@@ -174,6 +177,9 @@
           "sos": "SOS",
           "flood_freeze": "Flood or freeze"
         }
+      },
+      "siren_duration": {
+        "name": "Duration"
       }
     }
   },
@@ -343,6 +349,38 @@
     "silence": {
       "name": "Silence siren",
       "description": "Mutes every sounding siren. The alarm stays open and keeps its response until it is disarmed. Refused when no siren is sounding."
+    },
+    "set_siren": {
+      "name": "Enroll or update siren",
+      "description": "Treats a Z-Wave node as a siren, or changes an enrolled siren's kind, name or duration. Needs an administrator.",
+      "fields": {
+        "node_id": {
+          "name": "Z-Wave node",
+          "description": "The node id of the siren."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "Base, dome or outdoor."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What to call the siren."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Seconds an outdoor siren sounds, 60 to 600 (default 180). Base and dome sirens are fixed at 600."
+        }
+      }
+    },
+    "remove_siren": {
+      "name": "Remove siren",
+      "description": "Stops treating a node as a siren.",
+      "fields": {
+        "node_id": {
+          "name": "Z-Wave node",
+          "description": "The node id of the siren."
+        }
+      }
     }
   },
   "selector": {
@@ -401,6 +439,13 @@
         "police": "Police",
         "fire": "Fire",
         "medical": "Medical"
+      }
+    },
+    "siren_kind": {
+      "options": {
+        "base": "Base station",
+        "dome": "Dome (indoor)",
+        "outdoor": "Outdoor"
       }
     }
   },

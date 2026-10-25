@@ -52,6 +52,9 @@ class StreamState:
     # AlarmEvent dicts that are still open (`endedAt` null), oldest first. The snapshot's `alarmEvents` is absent on a
     # service older than 3.2.0, which leaves this empty.
     alarm_events: list[dict[str, Any]] = field(default_factory=list)
+    # Enrolled Siren dicts (`nodeId`, `kind`, `name`, `durationSec`, `createdAt`); the snapshot's `sirens` is absent on a
+    # service older than 3.3.0, which leaves this empty.
+    sirens: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -93,7 +96,16 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             keypad_settings=event.get("keypadSettings"),
             modes=event.get("modes"),
             alarm_events=[e for e in event.get("alarmEvents") or [] if e.get("endedAt") is None],
+            sirens=event.get("sirens") or [],
         )
+
+    if event_type == "siren.changed":
+        siren = event["siren"]
+        sirens = [x for x in state.sirens if x["nodeId"] != siren["nodeId"]]
+        return replace(state, sirens=sorted([*sirens, siren], key=lambda x: x["nodeId"]))
+
+    if event_type == "siren.removed":
+        return replace(state, sirens=[x for x in state.sirens if x["nodeId"] != event["nodeId"]])
 
     if event_type == "alarm.event":
         # Sent on creation and on every change; an event that ended is no longer open.
@@ -148,7 +160,12 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
         return _with_sensor_update(
             state,
             event["sensorId"],
-            {"connectivityStatus": event["connectivityStatus"], "batteryLevel": event["batteryLevel"]},
+            {
+                "connectivityStatus": event["connectivityStatus"],
+                "batteryLevel": event["batteryLevel"],
+                # Absent on a service older than 3.3.0: keep what the snapshot said.
+                **({"tampered": event["tampered"]} if "tampered" in event else {}),
+            },
         )
 
     # `event.recorded` and `keypad.event` carry no panel/zone/sensor/keypad state (the coordinator

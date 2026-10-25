@@ -84,6 +84,9 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.sirens: list[dict] | None = None  # the snapshot's `sirens`; None leaves it out like an older service
+        self.siren_calls: list[tuple] = []
+        self.siren_status = 200
         self.panic_calls: list[dict] = []
         self.silence_calls = 0
         self.silence_status = 200
@@ -135,6 +138,21 @@ class FakeService:
         if self.silence_status != 200:
             return web.json_response({"error": {"code": "conflict", "message": "Nothing is sounding."}}, status=409)
         return web.json_response({"silenced": [{**self.alarm_events[0], "sirenState": "silenced"}]})
+
+    async def put_siren(self, request: web.Request) -> web.Response:
+        self._note(request)
+        node_id, body = int(request.match_info["node_id"]), await request.json()
+        self.siren_calls.append(("put", node_id, body))
+        if self.siren_status != 200:
+            return web.json_response({"error": {"code": "forbidden", "message": "no"}}, status=self.siren_status)
+        siren = {"nodeId": node_id, "kind": body["kind"], "name": body.get("name") or f"Siren {node_id}",
+                 "durationSec": body.get("durationSec", 600 if body["kind"] != "OUTDOOR" else 180), "createdAt": 1}
+        return web.json_response(siren)
+
+    async def delete_siren(self, request: web.Request) -> web.Response:
+        self._note(request)
+        self.siren_calls.append(("delete", int(request.match_info["node_id"])))
+        return web.Response(status=204)
 
     async def arm(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -215,6 +233,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.sirens is not None:
+            snapshot["sirens"] = copy.deepcopy(self.sirens)
         if self.alarm_events is not None:
             snapshot["alarmEvents"] = copy.deepcopy(self.alarm_events)
         if self.modes is not None:
@@ -249,6 +269,8 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
+    app.router.add_put("/api/v1/sirens/{node_id}", fake.put_siren)
+    app.router.add_delete("/api/v1/sirens/{node_id}", fake.delete_siren)
     app.router.add_post("/api/v1/panel/arm", fake.arm)
     app.router.add_post("/api/v1/panel/panic", fake.panic)
     app.router.add_post("/api/v1/panel/silence", fake.silence)
@@ -1483,3 +1505,106 @@ async def test_silence_with_nothing_sounding_raises(hass: HomeAssistant, service
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(DOMAIN, "silence", {"entity_id": ALARM}, blocking=True)
+
+
+OUTDOOR = {"nodeId": 14, "kind": "OUTDOOR", "name": "Garden", "durationSec": 180, "createdAt": 1}
+BASE_SIREN = {"nodeId": 3, "kind": "BASE", "name": "Base", "durationSec": 600, "createdAt": 1}
+GARDEN_DURATION = "number.zwave_alarm_siren_14_duration"
+
+
+async def test_outdoor_siren_gets_a_duration_number_and_the_base_siren_a_read_only_sensor(
+    hass: HomeAssistant, service: FakeService, setup
+) -> None:
+    service.sirens = [OUTDOOR, BASE_SIREN]
+    await setup()
+    await _settle(hass, service)
+
+    assert (await _entity(hass, GARDEN_DURATION)).state == "180"
+    assert (await _entity(hass, "sensor.zwave_alarm_siren_3_duration")).state == "600"
+    assert hass.states.get("number.zwave_alarm_siren_3_duration") is None
+
+
+async def test_siren_duration_number_writes_the_outdoor_siren(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.sirens = [OUTDOOR]
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, GARDEN_DURATION)
+
+    await hass.services.async_call("number", "set_value", {"entity_id": GARDEN_DURATION, "value": 300}, blocking=True)
+
+    assert service.siren_calls == [("put", 14, {"kind": "OUTDOOR", "durationSec": 300})]
+    assert hass.states.get(GARDEN_DURATION).state == "300"
+
+
+async def test_siren_duration_follows_the_stream_and_a_removed_siren_goes_unavailable(
+    hass: HomeAssistant, service: FakeService, setup
+) -> None:
+    service.sirens = [OUTDOOR]
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, GARDEN_DURATION)
+
+    await _push(hass, service, {"type": "siren.changed", "siren": {**OUTDOOR, "durationSec": 90}})
+    assert hass.states.get(GARDEN_DURATION).state == "90"
+
+    await _push(hass, service, {"type": "siren.removed", "nodeId": 14})
+    assert hass.states.get(GARDEN_DURATION).state == "unavailable"
+
+
+async def test_set_siren_action_enrolls_a_siren_and_remove_siren_removes_it(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(
+        DOMAIN, "set_siren", {"entity_id": ALARM, "node_id": 14, "kind": "outdoor", "name": "Garden", "duration": 120}, blocking=True
+    )
+    assert service.siren_calls == [("put", 14, {"kind": "OUTDOOR", "name": "Garden", "durationSec": 120})]
+    assert (await _entity(hass, GARDEN_DURATION)).state == "120"
+
+    await hass.services.async_call(DOMAIN, "remove_siren", {"entity_id": ALARM, "node_id": 14}, blocking=True)
+    assert service.siren_calls[-1] == ("delete", 14)
+    assert hass.states.get(GARDEN_DURATION).state == "unavailable"
+
+
+async def test_set_siren_refuses_a_duration_on_a_base_siren(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError, match="outdoor"):
+        await hass.services.async_call(
+            DOMAIN, "set_siren", {"entity_id": ALARM, "node_id": 3, "kind": "base", "duration": 120}, blocking=True
+        )
+    assert service.siren_calls == []
+
+
+async def test_set_siren_refused_by_the_service_raises(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.siren_status = 403
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "set_siren", {"entity_id": ALARM, "node_id": 14, "kind": "outdoor"}, blocking=True)
+
+
+TAMPER = "binary_sensor.zwave_alarm_tamper_front_door"
+
+
+async def test_tamper_sensor_follows_the_snapshot_and_sensor_fault(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.zones[0]["sensors"][0]["tampered"] = False
+    await setup()
+    await _settle(hass, service)
+    sensor_id = service.zones[0]["sensors"][0]["id"]
+    assert (await _entity(hass, TAMPER)).state == "off"
+
+    await _push(hass, service, {
+        "type": "sensor.fault", "sensorId": sensor_id, "connectivityStatus": "online", "batteryLevel": 90, "tampered": True,
+    })
+    assert hass.states.get(TAMPER).state == "on"
+    assert hass.states.get("sensor.zwave_alarm_fault_count").state == "1"
+
+
+async def test_tamper_sensor_is_unknown_on_a_service_that_does_not_report_it(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert (await _entity(hass, TAMPER)).state == "unknown"

@@ -50,6 +50,8 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_ARM = "arm"
 SERVICE_PANIC = "panic"
 SERVICE_SILENCE = "silence"
+SERVICE_SET_SIREN = "set_siren"
+SERVICE_REMOVE_SIREN = "remove_siren"
 
 
 async def async_setup_entry(
@@ -78,6 +80,19 @@ async def async_setup_entry(
         "async_panic",
     )
     platform.async_register_entity_service(SERVICE_SILENCE, {}, "async_silence")
+    platform.async_register_entity_service(
+        SERVICE_SET_SIREN,
+        {
+            vol.Required("node_id"): vol.All(int, vol.Range(min=1)),
+            vol.Required("kind"): vol.In(["base", "dome", "outdoor"]),
+            vol.Optional("name"): cv.string,
+            vol.Optional("duration"): vol.All(int, vol.Range(min=60, max=600)),
+        },
+        "async_set_siren",
+    )
+    platform.async_register_entity_service(
+        SERVICE_REMOVE_SIREN, {vol.Required("node_id"): vol.All(int, vol.Range(min=1))}, "async_remove_siren"
+    )
 
 
 class ZwaveAlarmControlPanel(
@@ -148,6 +163,18 @@ class ZwaveAlarmControlPanel(
     async def async_panic(self, type: str, service: str | None = None) -> None:
         """`zwave_alarm.panic`: raise a real PANIC, FIRE, MEDICAL or SOS alarm (`service` only matters for SOS)."""
         await self.coordinator.async_panic(type.upper(), service)
+
+    async def async_set_siren(
+        self, node_id: int, kind: str, name: str | None = None, duration: int | None = None
+    ) -> None:
+        """`zwave_alarm.set_siren`: enroll a siren, or change its kind, name or (outdoor only) duration. Administrator only."""
+        if duration is not None and kind != "outdoor":
+            raise ServiceValidationError("Only an outdoor siren has a configurable duration; base and dome sirens sound for 600 s.")
+        await self.coordinator.async_put_siren(node_id, kind.upper(), name, duration)
+
+    async def async_remove_siren(self, node_id: int) -> None:
+        """`zwave_alarm.remove_siren`: stop treating the node as a siren."""
+        await self.coordinator.async_delete_siren(node_id)
 
     async def async_silence(self) -> None:
         """`zwave_alarm.silence`: mute the sounding sirens; the alarm stays open. Refused when none is sounding."""

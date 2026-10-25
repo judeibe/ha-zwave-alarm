@@ -170,6 +170,7 @@ function SensorDetail({ zone, sensor }: { zone: { id: string; name: string }; se
         <DetailRow label="Category">{sensor.category}</DetailRow>
         {sensor.placement && <DetailRow label="Placement">{placementLabel(sensor.placement)}</DetailRow>}
         <DetailRow label="Z-Wave node">{sensor.zwaveNodeId}</DetailRow>
+        {sensor.tampered != null && <DetailRow label="Tamper">{sensor.tampered ? <Pill tone="alert">tampered</Pill> : "OK"}</DetailRow>}
         {sensor.connectivityStatus && <DetailRow label="Connection">{sensor.connectivityStatus}</DetailRow>}
         {sensor.batteryLevel != null && <DetailRow label="Battery">{sensor.batteryLevel}%</DetailRow>}
       </InsetList>
