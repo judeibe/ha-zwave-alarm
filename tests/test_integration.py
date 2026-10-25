@@ -1436,7 +1436,7 @@ async def test_panic_action_raises_the_alarm_and_shows_it_at_once(hass: HomeAssi
     await setup()
     await _settle(hass, service)
 
-    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "SOS", "service": "fire"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "sos", "service": "fire"}, blocking=True)
 
     assert service.panic_calls == [{"type": "SOS", "service": "fire"}]
     assert hass.states.get(EVENT_SENSOR).state == "sos"
@@ -1447,7 +1447,7 @@ async def test_medical_panic_does_not_sound_the_siren(hass: HomeAssistant, servi
     await setup()
     await _settle(hass, service)
 
-    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "MEDICAL"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "medical"}, blocking=True)
 
     assert service.panic_calls == [{"type": "MEDICAL"}]
     assert hass.states.get(EVENT_SENSOR).state == "fire_medical"
@@ -1459,7 +1459,7 @@ async def test_panic_action_rejects_an_unknown_type(hass: HomeAssistant, service
     await _settle(hass, service)
 
     with pytest.raises(vol.Invalid):
-        await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "BURGLARY"}, blocking=True)
+        await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "burglary"}, blocking=True)
     assert service.panic_calls == []
 
 

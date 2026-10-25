@@ -332,7 +332,7 @@
       "fields": {
         "type": {
           "name": "Type",
-          "description": "PANIC (police), FIRE, MEDICAL (no siren) or SOS."
+          "description": "Panic (police), fire, medical (no siren) or SOS."
         },
         "service": {
           "name": "Service",
@@ -390,10 +390,10 @@
     },
     "panic_type": {
       "options": {
-        "PANIC": "Panic (police)",
-        "FIRE": "Fire",
-        "MEDICAL": "Medical",
-        "SOS": "SOS"
+        "panic": "Panic (police)",
+        "fire": "Fire",
+        "medical": "Medical",
+        "sos": "SOS"
       }
     },
     "panic_service": {

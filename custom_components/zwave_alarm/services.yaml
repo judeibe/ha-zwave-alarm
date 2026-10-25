@@ -242,14 +242,14 @@ panic:
   fields:
     type:
       required: true
-      example: PANIC
+      example: panic
       selector:
         select:
           options:
-            - PANIC
-            - FIRE
-            - MEDICAL
-            - SOS
+            - panic
+            - fire
+            - medical
+            - sos
           translation_key: panic_type
     service:
       required: false

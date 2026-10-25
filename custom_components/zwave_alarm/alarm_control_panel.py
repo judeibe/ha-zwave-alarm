@@ -72,7 +72,7 @@ async def async_setup_entry(
     platform.async_register_entity_service(
         SERVICE_PANIC,
         {
-            vol.Required("type"): vol.In(["PANIC", "FIRE", "MEDICAL", "SOS"]),
+            vol.Required("type"): vol.All(vol.Lower, vol.In(["panic", "fire", "medical", "sos"])),
             vol.Optional("service"): vol.In(["police", "fire", "medical"]),
         },
         "async_panic",
@@ -147,7 +147,7 @@ class ZwaveAlarmControlPanel(
 
     async def async_panic(self, type: str, service: str | None = None) -> None:
         """`zwave_alarm.panic`: raise a real PANIC, FIRE, MEDICAL or SOS alarm (`service` only matters for SOS)."""
-        await self.coordinator.async_panic(type, service)
+        await self.coordinator.async_panic(type.upper(), service)
 
     async def async_silence(self) -> None:
         """`zwave_alarm.silence`: mute the sounding sirens; the alarm stays open. Refused when none is sounding."""
