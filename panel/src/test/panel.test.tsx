@@ -4,7 +4,7 @@ import { RouterProvider } from "react-router";
 import { ApiError } from "../api";
 import { ApiContext } from "../context";
 import { createTestRouter } from "../routes";
-import type { Overview } from "../types";
+import type { Overview, Zone } from "../types";
 import { fakeApi, OVERVIEW, WITH_LOCKS } from "./fixtures";
 
 function setup(path = "/", fail: Record<string, string> = {}, overview: Overview = OVERVIEW, results: Record<string, unknown> = {}) {
@@ -512,7 +512,8 @@ describe("sirens and tamper", () => {
   });
 
   it("shows a tampered sensor on its sheet", async () => {
-    const tampered = { ...OVERVIEW, zones: [{ ...OVERVIEW.zones[0], sensors: [{ ...OVERVIEW.zones[0].sensors[0], tampered: true }] }, OVERVIEW.zones[1]] };
+    const [downstairs, upstairs] = OVERVIEW.zones as [Zone, Zone];
+    const tampered: Overview = { ...OVERVIEW, zones: [{ ...downstairs, sensors: downstairs.sensors.map((x) => ({ ...x, tampered: true })) }, upstairs] };
     setup("/sensors/s1", {}, tampered);
     expect(await screen.findByText("tampered")).toBeInTheDocument();
   });
