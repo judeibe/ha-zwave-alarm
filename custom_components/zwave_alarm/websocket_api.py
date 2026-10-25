@@ -191,6 +191,13 @@ def _keypads_summary(hass: HomeAssistant, entry: ConfigEntry) -> tuple[list[dict
     return getattr(data, "keypads", []), getattr(data, "keypad_settings", None)
 
 
+def _modes(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, dict[str, int]] | None:
+    """Per-mode entry/exit delays the coordinator last received; `None` before a snapshot or on a service older than 3.0.0."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    data = coordinator.data if coordinator is not None else None
+    return getattr(data, "modes", None)
+
+
 def _lock_view(lock: dict[str, Any]) -> dict[str, Any]:
     """An enrolled lock as the panel sees it: the service's summary plus the resolved capability flags."""
     return {**lock, "capabilities": api.lock_capabilities(lock)}
@@ -288,6 +295,7 @@ async def ws_overview(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> 
         "ha_users": await _ha_users(hass),
         "keypads": keypads,
         "keypad_settings": keypad_settings,
+        "modes": _modes(hass, call.entry),
         "locks": _lock_summaries(hass, call.entry),
         "discoverable_locks": available_locks,
         "discoverable_locks_error": available_locks_error,
@@ -322,23 +330,62 @@ async def ws_zone_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) 
 # --- Sensors ----------------------------------------------------------------
 
 
+PLACEMENT_SCHEMA = vol.In(["MAIN_DOOR", "SECONDARY_DOOR", "WINDOW", "ENTRYWAY", "ROOM", "GLASS_BREAK"])
+ARMED_SCHEMA = vol.All(
+    vol.Schema({vol.Optional("home"): bool, vol.Optional("away"): bool}), vol.Length(min=1)
+)
+DELAY_SCHEMA = vol.All(int, vol.Range(min=0, max=180))
+_MODE_DELAYS_SCHEMA = vol.All(
+    vol.Schema({vol.Optional("entryDelaySec"): DELAY_SCHEMA, vol.Optional("exitDelaySec"): DELAY_SCHEMA}),
+    vol.Length(min=1),
+)
+
+
 @_command({vol.Required("type"): "zwave_alarm/sensor/assign", vol.Required("zone_id"): str,
            vol.Required("zwave_node_id"): int, vol.Required("name"): vol.All(str, vol.Length(min=1)),
-           vol.Required("category"): CATEGORY_SCHEMA})
+           vol.Required("category"): CATEGORY_SCHEMA, vol.Optional("placement"): PLACEMENT_SCHEMA,
+           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool})
 async def ws_sensor_assign(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
-    return await call(api.async_assign_sensor, msg["zone_id"], msg["zwave_node_id"], msg["name"], msg["category"])
+    sensor = await call(api.async_assign_sensor, msg["zone_id"], msg["zwave_node_id"], msg["name"], msg["category"])
+    # The service's POST also takes placement/armed/alertsOnly, but the client's assign call predates them: apply
+    # them with the PATCH that does, so a new sensor lands configured in one panel action.
+    extra = _placement_update(msg)
+    return await call(api.async_update_sensor, sensor["id"], extra) if extra else sensor
+
+
+def _placement_update(msg: dict[str, Any]) -> dict[str, Any]:
+    update: dict[str, Any] = {}
+    if "placement" in msg:
+        update["placement"] = msg["placement"]
+    if "armed" in msg:
+        update["armed"] = msg["armed"]
+    if "alerts_only" in msg:
+        update["alertsOnly"] = msg["alerts_only"]
+    return update
 
 
 @_command({vol.Required("type"): "zwave_alarm/sensor/update", vol.Required("sensor_id"): str,
            vol.Optional("name"): vol.All(str, vol.Length(min=1)), vol.Optional("category"): CATEGORY_SCHEMA,
-           vol.Optional("zone_id"): str})
+           vol.Optional("zone_id"): str, vol.Optional("placement"): PLACEMENT_SCHEMA,
+           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool})
 async def ws_sensor_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
     update = {"name": msg["name"]} if "name" in msg else {}
+    update.update(_placement_update(msg))
     if "category" in msg:
         update["category"] = msg["category"]
     if "zone_id" in msg:
         update["zoneId"] = msg["zone_id"]
     return await call(api.async_update_sensor, msg["sensor_id"], update)
+
+
+@_command({vol.Required("type"): "zwave_alarm/modes/update", vol.Optional("armed_home"): _MODE_DELAYS_SCHEMA,
+           vol.Optional("armed_away"): _MODE_DELAYS_SCHEMA})
+async def ws_modes_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Per-mode entry/exit delay (0-180 s); the new config is also pushed to the entities and the panel."""
+    changes = {mode: msg[mode] for mode in ("armed_home", "armed_away") if mode in msg}
+    if not changes:
+        raise api.BadRequest("Pass armed_home and/or armed_away.")
+    return await hass.data[DOMAIN][call.entry.entry_id].async_update_modes(changes)
 
 
 @_command({vol.Required("type"): "zwave_alarm/sensor/unassign", vol.Required("sensor_id"): str})

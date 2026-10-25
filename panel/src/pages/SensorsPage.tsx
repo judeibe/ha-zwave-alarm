@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Outlet, useNavigate, useParams } from "react-router";
 import { ApiError } from "../api";
-import { Actions, Button, EmptyState, ErrorBanner, FIELD, Field, Hint, Pill, SectionTitle, Select } from "../components";
+import { Actions, Button, EmptyState, ErrorBanner, FIELD, Field, Hint, Pill, SectionTitle, Select, Switch } from "../components";
 import { useApi } from "../context";
-import { moveSensor, removeSensor } from "../patches";
+import { moveSensor, removeSensor, updateSensor } from "../patches";
 import { useOverview } from "../overview";
-import type { Category } from "../types";
+import type { Category, Placement } from "../types";
 import { useConfirm } from "../ui/Confirm";
 import { DetailRow, InsetList, ListRow } from "../ui/List";
 import { Gone } from "../ui/Gone";
@@ -13,6 +13,16 @@ import { Sheet, useRemembered, useSheet } from "../ui/Sheet";
 import { useAction } from "../useAction";
 
 const LIST = "/sensors";
+
+const PLACEMENTS: { value: Placement; label: string; hint: string }[] = [
+  { value: "MAIN_DOOR", label: "Main door", hint: "Starts the entry delay." },
+  { value: "ENTRYWAY", label: "Entryway", hint: "Motion that starts the entry delay." },
+  { value: "SECONDARY_DOOR", label: "Secondary door", hint: "Alarms immediately." },
+  { value: "WINDOW", label: "Window", hint: "Alarms immediately." },
+  { value: "ROOM", label: "Room", hint: "Motion that alarms immediately." },
+  { value: "GLASS_BREAK", label: "Glass break", hint: "Alarms immediately." },
+];
+const placementLabel = (p: Placement | null | undefined) => PLACEMENTS.find((x) => x.value === p)?.label;
 
 function ZoneSelect({ label = "Zone", value, onChange }: { label?: string; value: string; onChange: (v: string) => void }) {
   const { zones } = useOverview();
@@ -64,7 +74,7 @@ export function SensorsPage() {
               to={sensor.id}
               icon="sensors"
               title={sensor.haName ?? sensor.name}
-              subtitle={`${zone.name} · ${sensor.category}`}
+              subtitle={[zone.name, sensor.category, placementLabel(sensor.placement)].filter(Boolean).join(" · ")}
               trailing={<Pill tone={sensor.currentState === "breached" ? "alert" : "ok"}>{sensor.currentState}</Pill>}
             />
           ))}
@@ -158,10 +168,56 @@ function SensorDetail({ zone, sensor }: { zone: { id: string; name: string }; se
           <Pill tone={sensor.currentState === "breached" ? "alert" : "ok"}>{sensor.currentState}</Pill>
         </DetailRow>
         <DetailRow label="Category">{sensor.category}</DetailRow>
+        {sensor.placement && <DetailRow label="Placement">{placementLabel(sensor.placement)}</DetailRow>}
         <DetailRow label="Z-Wave node">{sensor.zwaveNodeId}</DetailRow>
         {sensor.connectivityStatus && <DetailRow label="Connection">{sensor.connectivityStatus}</DetailRow>}
         {sensor.batteryLevel != null && <DetailRow label="Battery">{sensor.batteryLevel}%</DetailRow>}
       </InsetList>
+      {sensor.placement && (
+        <>
+          <Field label="Placement">
+            <Select
+              value={sensor.placement}
+              onChange={(e) => {
+                const placement = e.target.value as Placement;
+                // A new placement resets the armed flags to its defaults (motion: Away only); the reload shows them.
+                run(() => api.call("sensor/update", { sensor_id: sensor.id, placement }), { patch: updateSensor(sensor.id, { placement }), done: "Placement saved" });
+              }}
+            >
+              {PLACEMENTS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Hint>{PLACEMENTS.find((p) => p.value === sensor.placement)?.hint}</Hint>
+          <InsetList label="Armed in">
+            {(["home", "away"] as const).map((mode) => {
+              const key = mode === "home" ? "armedHome" : "armedAway";
+              const label = mode === "home" ? "Armed in Home" : "Armed in Away";
+              return (
+                <li key={mode} className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+                  <span className="min-w-0 flex-1 text-[17px] leading-snug">{label}</span>
+                  <Switch
+                    checked={sensor[key] ?? true}
+                    aria-label={label}
+                    onChange={(next) => run(() => api.call("sensor/update", { sensor_id: sensor.id, armed: { [mode]: next } }), { patch: updateSensor(sensor.id, { [key]: next }), done: "Saved" })}
+                  />
+                </li>
+              );
+            })}
+            <li className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+              <span className="min-w-0 flex-1 text-[17px] leading-snug">Alerts only (never alarms)</span>
+              <Switch
+                checked={sensor.alertsOnly ?? false}
+                aria-label="Alerts only"
+                onChange={(next) => run(() => api.call("sensor/update", { sensor_id: sensor.id, alerts_only: next }), { patch: updateSensor(sensor.id, { alertsOnly: next }), done: "Saved" })}
+              />
+            </li>
+          </InsetList>
+        </>
+      )}
       <ZoneSelect value={zoneId} onChange={setZoneId} />
       <Actions>
         <Button variant="primary" disabled={zoneId === zone.id} onClick={move}>

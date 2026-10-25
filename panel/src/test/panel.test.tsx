@@ -387,3 +387,41 @@ describe("locks", () => {
     expect(screen.getByText("This lock does not support access schedules.")).toBeInTheDocument();
   });
 });
+
+describe("modes and placements", () => {
+  it("shows each mode's delays and saves a changed one", async () => {
+    const { call, user } = setup("/");
+    const exit = await screen.findByLabelText("Away exit delay");
+    expect(exit).toHaveValue("30");
+    await user.clear(exit);
+    await user.type(exit, "90{Enter}");
+    expect(call).toHaveBeenCalledWith("modes/update", { armed_away: { exitDelaySec: 90 } });
+  });
+
+  it("does not send a delay above 180 seconds", async () => {
+    const { call, user } = setup("/");
+    const entry = await screen.findByLabelText("Home entry delay");
+    await user.clear(entry);
+    await user.type(entry, "181{Enter}");
+    expect(entry).toHaveAttribute("aria-invalid", "true");
+    expect(call).not.toHaveBeenCalledWith("modes/update", expect.anything());
+  });
+
+  it("hides the delays when the service predates them", async () => {
+    setup("/", {}, { ...OVERVIEW, modes: null });
+    await screen.findByText("Armed away");
+    expect(screen.queryByText("Entry and exit delays")).not.toBeInTheDocument();
+  });
+
+  it("changes a sensor's placement", async () => {
+    const { call, user } = setup("/sensors/s1");
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Placement" }), "WINDOW");
+    expect(call).toHaveBeenCalledWith("sensor/update", { sensor_id: "s1", placement: "WINDOW" });
+  });
+
+  it("turns a sensor off for Home only", async () => {
+    const { call, user } = setup("/sensors/s1");
+    await user.click(await screen.findByRole("switch", { name: "Armed in Home" }));
+    expect(call).toHaveBeenCalledWith("sensor/update", { sensor_id: "s1", armed: { home: false } });
+  });
+});

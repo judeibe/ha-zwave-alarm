@@ -135,6 +135,16 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "keypad.settings", "settings": settings}))
 
+    async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+        """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
+        modes = await self._call_client(
+            api.async_update_modes(self._session, self._host, self._port, None, changes, secure=self._secure),
+            "delay",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(replace(current, modes=modes))
+        return modes
+
     async def async_update_lock_settings(self, node_id: int, **changes: Any) -> None:
         """Write lock settings via `PATCH /api/v1/locks/{nodeId}/settings` and publish the returned lock at once."""
         lock = await self._call_client(

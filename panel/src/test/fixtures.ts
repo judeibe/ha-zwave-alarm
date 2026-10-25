@@ -7,7 +7,7 @@ export const OVERVIEW: Overview = {
   fault_count: 1,
   faults: { offline: 0, low_battery: 1 },
   zones: [
-    { id: "z1", name: "Downstairs", description: "Ground floor", sensors: [{ id: "s1", zwaveNodeId: 2, zoneId: "z1", name: "Front door", category: "intrusion", currentState: "normal" }] },
+    { id: "z1", name: "Downstairs", description: "Ground floor", sensors: [{ id: "s1", zwaveNodeId: 2, zoneId: "z1", name: "Front door", category: "intrusion", currentState: "normal", placement: "MAIN_DOOR", armedHome: true, armedAway: true, alertsOnly: false }] },
     { id: "z2", name: "Upstairs", sensors: [] },
   ],
   discoverable: [{ zwaveNodeId: 7, name: null, manufacturer: "Aeotec", product: "Door Sensor", status: "alive" }],
@@ -19,6 +19,7 @@ export const OVERVIEW: Overview = {
   ha_users: [],
   keypads: [{ nodeId: 12, adapterId: "ring-keypad-v2", label: "Ring Keypad v2", connectivityStatus: "online", batteryLevel: 87 }],
   keypad_settings: { requireCodeToArm: false },
+  modes: { armed_home: { entryDelaySec: 60, exitDelaySec: 60 }, armed_away: { entryDelaySec: 45, exitDelaySec: 30 } },
   locks: [],
   discoverable_locks: [],
 };

@@ -46,6 +46,9 @@ class StreamState:
     locks: list[dict[str, Any]] = field(default_factory=list)
     # KeypadSettings dict (`requireCodeToArm`); the snapshot's `keypadSettings` is optional, so older services leave this unset.
     keypad_settings: dict[str, Any] | None = None
+    # Per armed mode entry/exit delay, `{"armed_home": {"entryDelaySec": 60, "exitDelaySec": 60}, "armed_away": {...}}`
+    # (server 3.0.0+); the snapshot's `modes` is absent on older services, which leaves this unset.
+    modes: dict[str, dict[str, int]] | None = None
 
 
 def _find_sensor(zones: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
@@ -85,6 +88,7 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             keypads=event.get("keypads") or [],
             locks=event.get("locks") or [],
             keypad_settings=event.get("keypadSettings"),
+            modes=event.get("modes"),
         )
 
     if event_type == "keypad.settings":
@@ -118,7 +122,7 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
         # change that leaves the armed family makes any earlier value stale.
         if event["mode"] == "disarmed":
             panel["armedMode"] = None
-        return replace(state, panel=panel)
+        return replace(state, panel=panel, modes=event.get("modes", state.modes))
 
     if event_type == "sensor.changed":
         return _with_sensor_update(
