@@ -284,6 +284,47 @@ async def test_sensor_update_maps_wire_names(hass, hass_ws_client, entry) -> Non
     assert update.await_args.args[-2:] == ("s1", {"category": "intrusion", "zoneId": "z2"})
 
 
+async def test_sensor_update_passes_placement_and_armed_flags(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_update_sensor", AsyncMock(return_value={})) as update:
+        resp = await _send(
+            await hass_ws_client(hass), "sensor/update", sensor_id="s1", placement="ENTRYWAY", armed={"home": False}, alerts_only=True
+        )
+    assert resp["success"]
+    assert update.await_args.args[-2:] == ("s1", {"placement": "ENTRYWAY", "armed": {"home": False}, "alertsOnly": True})
+
+
+@pytest.mark.parametrize("payload", [{"placement": "GARAGE"}, {"armed": {}}, {"armed": {"home": "yes"}}])
+async def test_sensor_update_rejects_bad_placement_or_flags(hass, hass_ws_client, entry, payload) -> None:
+    resp = await _send(await hass_ws_client(hass), "sensor/update", sensor_id="s1", **payload)
+    assert not resp["success"]
+
+
+async def test_sensor_assign_sends_placement_in_one_call(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_assign_sensor", AsyncMock(return_value={"id": "s9"})) as assign:
+        resp = await _send(
+            await hass_ws_client(hass), "sensor/assign", zone_id="z1", zwave_node_id=7, name="Back door", category="intrusion",
+            placement="SECONDARY_DOOR", armed={"away": True},
+        )
+    assert resp["result"] == {"id": "s9"}
+    assert assign.await_args.args[-4:] == ("z1", 7, "Back door", "intrusion")
+    assert assign.await_args.kwargs == {"placement": "SECONDARY_DOOR", "armed": {"away": True}, "alerts_only": None, "secure": False}
+
+
+async def test_modes_update_writes_through_the_coordinator(hass, hass_ws_client, entry) -> None:
+    update = AsyncMock(return_value={"armed_home": {"entryDelaySec": 90, "exitDelaySec": 60}})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_update_modes=update, data=None)
+    resp = await _send(await hass_ws_client(hass), "modes/update", armed_home={"entryDelaySec": 90})
+    assert resp["success"]
+    update.assert_awaited_once_with({"armed_home": {"entryDelaySec": 90}})
+
+
+@pytest.mark.parametrize("payload", [{"armed_home": {"entryDelaySec": 181}}, {"armed_away": {"exitDelaySec": -1}}, {"armed_home": {}}, {}])
+async def test_modes_update_rejects_bad_delays(hass, hass_ws_client, entry, payload) -> None:
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_update_modes=AsyncMock(), data=None)
+    resp = await _send(await hass_ws_client(hass), "modes/update", **payload)
+    assert not resp["success"]
+
+
 async def test_no_loaded_entry(hass, hass_ws_client) -> None:
     assert await async_setup_component(hass, DOMAIN, {})
     resp = await _send(await hass_ws_client(hass), "overview")

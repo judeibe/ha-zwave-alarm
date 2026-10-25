@@ -83,6 +83,9 @@ class FakeService:
         self.keypad_settings: dict | None = {"requireCodeToArm": False}
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
+        self.modes_calls: list[dict] = []
+        self.modes_status = 200
+        self.modes: dict | None = {"armed_home": {"entryDelaySec": 60, "exitDelaySec": 60}, "armed_away": {"entryDelaySec": 45, "exitDelaySec": 30}}
         self.chime_calls: list[dict] = []
         self.chime_status = 204
         self.auth_headers: list[str | None] = []
@@ -107,6 +110,16 @@ class FakeService:
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
+
+    async def patch_modes(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.modes_calls.append(body)
+        if self.modes_status != 200:
+            return web.json_response({"error": {"code": "bad_request", "message": "no"}}, status=self.modes_status)
+        for mode, changes in body.items():
+            self.modes[mode] = {**self.modes[mode], **changes}
+        return web.json_response(self.modes)
 
     async def patch_keypad_settings(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -163,6 +176,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.modes is not None:
+            snapshot["modes"] = copy.deepcopy(self.modes)
         if self.keypad_settings is not None:
             snapshot["keypadSettings"] = copy.deepcopy(self.keypad_settings)
         if self.locks is not None:
@@ -193,6 +208,7 @@ async def service(socket_enabled):
     app.router.add_get("/api/v1/zones", fake.zones_handler)
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
+    app.router.add_patch("/api/v1/modes", fake.patch_modes)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
     app.router.add_put("/api/v1/locks/{node_id}/state", fake.lock_state)
@@ -1195,3 +1211,62 @@ async def test_locking_an_already_locked_lock_does_not_stay_pending(hass: HomeAs
     await hass.services.async_call("lock", "lock", {"entity_id": "lock.front_door_lock"}, blocking=True)
     assert locks.lock_calls == [("state", 21, {"locked": True})]
     assert await _entity_state(hass) == "locked"
+
+
+DELAY = "number.z_wave_alarm_away_exit_delay"
+
+
+async def test_delay_numbers_follow_the_snapshot(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get("number.z_wave_alarm_home_entry_delay").state == "60"
+    assert hass.states.get(DELAY).state == "30"
+
+
+async def test_delay_number_writes_one_mode_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 90}, blocking=True)
+
+    assert service.modes_calls == [{"armed_away": {"exitDelaySec": 90}}]
+    assert hass.states.get(DELAY).state == "90"
+    assert hass.states.get("number.z_wave_alarm_home_exit_delay").state == "60"
+
+
+async def test_delay_number_follows_panel_changed(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+    modes = {**service.modes, "armed_away": {"entryDelaySec": 5, "exitDelaySec": 6}}
+
+    await _push(hass, service, {"type": "panel.changed", "mode": "disarmed", "pendingDelayEndsAt": None, "modes": modes})
+
+    assert hass.states.get("number.z_wave_alarm_away_entry_delay").state == "5"
+
+
+async def test_delay_number_above_180_is_refused_before_the_service(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 181}, blocking=True)
+    assert service.modes_calls == []
+
+
+async def test_delay_number_refused_by_the_service_raises_and_stays_put(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.modes_status = 400
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call("number", "set_value", {"entity_id": DELAY, "value": 90}, blocking=True)
+    assert hass.states.get(DELAY).state == "30"
+
+
+async def test_no_delay_numbers_on_a_service_without_modes(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.modes = None
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get(DELAY) is None

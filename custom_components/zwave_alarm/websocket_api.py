@@ -346,11 +346,16 @@ _MODE_DELAYS_SCHEMA = vol.All(
            vol.Required("category"): CATEGORY_SCHEMA, vol.Optional("placement"): PLACEMENT_SCHEMA,
            vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool})
 async def ws_sensor_assign(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
-    sensor = await call(api.async_assign_sensor, msg["zone_id"], msg["zwave_node_id"], msg["name"], msg["category"])
-    # The service's POST also takes placement/armed/alertsOnly, but the client's assign call predates them: apply
-    # them with the PATCH that does, so a new sensor lands configured in one panel action.
-    extra = _placement_update(msg)
-    return await call(api.async_update_sensor, sensor["id"], extra) if extra else sensor
+    return await call(
+        api.async_assign_sensor,
+        msg["zone_id"],
+        msg["zwave_node_id"],
+        msg["name"],
+        msg["category"],
+        placement=msg.get("placement"),
+        armed=msg.get("armed"),
+        alerts_only=msg.get("alerts_only"),
+    )
 
 
 def _placement_update(msg: dict[str, Any]) -> dict[str, Any]:
@@ -572,7 +577,7 @@ async def ws_lock_schedule_enabled(hass: HomeAssistant, call: _Call, msg: dict[s
 
 COMMANDS = (
     ws_overview, ws_zone_create, ws_zone_update, ws_zone_delete,
-    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign,
+    ws_sensor_assign, ws_sensor_update, ws_sensor_unassign, ws_modes_update,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
     ws_keypad_settings_update,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,
