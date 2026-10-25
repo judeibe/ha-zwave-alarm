@@ -31,6 +31,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .alarm_event_state import EVENT_TYPES, NO_EVENT, event_attributes, event_state
 from .fault_state import count_faulted_sensors, faulted_sensors
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
 from .keypad_state import keypad_battery_level
@@ -51,7 +52,7 @@ async def async_setup_entry(
 ) -> None:
     """Create the single fault-count sensor for this config entry."""
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([ZwaveAlarmFaultCountSensor(coordinator, entry)])
+    async_add_entities([ZwaveAlarmFaultCountSensor(coordinator, entry), ZwaveAlarmAlarmEventSensor(coordinator, entry)])
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadBatterySensor(c, e, keypad)]
     )
@@ -65,6 +66,29 @@ def _lock_sensors(coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: 
         ZwaveAlarmLockOccupiedSlotsSensor(coordinator, entry, lock),
         ZwaveAlarmLockBootloaderSensor(coordinator, entry, lock),
     ]
+
+
+class ZwaveAlarmAlarmEventSensor(CoordinatorEntity[ZwaveAlarmCoordinator], SensorEntity):
+    """The type of the newest open alarm event (`none` when there is none), with its siren and dispatch state as attributes."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "alarm_event"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [NO_EVENT, *EVENT_TYPES]
+    _attr_icon = "mdi:bell-alert"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_alarm_event"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def native_value(self) -> str | None:
+        return event_state(self.coordinator.data.alarm_events) if self.coordinator.data is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        return event_attributes(self.coordinator.data.alarm_events) if self.coordinator.data is not None else None
 
 
 class ZwaveAlarmFaultCountSensor(CoordinatorEntity[ZwaveAlarmCoordinator], SensorEntity):

@@ -84,6 +84,10 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.panic_calls: list[dict] = []
+        self.silence_calls = 0
+        self.silence_status = 200
+        self.alarm_events: list[dict] | None = None  # the snapshot's `alarmEvents`; None leaves it out like an older service
         self.arm_faulted: list[dict] = []  # non-empty: an arm without `bypass` covering them is refused with 409 needs_bypass
         self.modes_calls: list[dict] = []
         self.modes_status = 200
@@ -112,6 +116,25 @@ class FakeService:
         if self.chime_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": "bad_request", "message": "nope"}}, status=self.chime_status)
+
+    async def panic(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.panic_calls.append(body)
+        kind = {"FIRE": "FIRE_MEDICAL", "MEDICAL": "FIRE_MEDICAL"}.get(body["type"], body["type"])
+        return web.json_response(
+            {"id": "e-panic", "type": kind, "service": body.get("service"), "triggerDeviceId": None, "startedAt": 100,
+             "sirenState": "none" if body["type"] == "MEDICAL" else "sounding", "dispatchState": "queued",
+             "cancelledAt": None, "endedAt": None, "details": None},
+            status=201,
+        )
+
+    async def silence(self, request: web.Request) -> web.Response:
+        self._note(request)
+        self.silence_calls += 1
+        if self.silence_status != 200:
+            return web.json_response({"error": {"code": "conflict", "message": "Nothing is sounding."}}, status=409)
+        return web.json_response({"silenced": [{**self.alarm_events[0], "sirenState": "silenced"}]})
 
     async def arm(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -192,6 +215,8 @@ class FakeService:
         snapshot = {"type": "snapshot", "panel": PANEL, "zones": copy.deepcopy(self.zones)}
         if self.keypads is not None:
             snapshot["keypads"] = copy.deepcopy(self.keypads)
+        if self.alarm_events is not None:
+            snapshot["alarmEvents"] = copy.deepcopy(self.alarm_events)
         if self.modes is not None:
             snapshot["modes"] = copy.deepcopy(self.modes)
         if self.keypad_settings is not None:
@@ -225,6 +250,8 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/panel/disarm", fake.disarm)
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
     app.router.add_post("/api/v1/panel/arm", fake.arm)
+    app.router.add_post("/api/v1/panel/panic", fake.panic)
+    app.router.add_post("/api/v1/panel/silence", fake.silence)
     app.router.add_patch("/api/v1/modes", fake.patch_modes)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
@@ -1368,3 +1395,91 @@ async def test_a_keypad_missing_from_one_snapshot_does_not_get_its_entities_adde
 
     assert "does not generate unique IDs" not in caplog.text
     assert hass.states.get("binary_sensor.ring_keypad_v2_connectivity").state == "on"
+
+
+BURGLARY_EVENT = {
+    "id": "e1", "type": "BURGLARY", "service": None, "triggerDeviceId": "s1", "startedAt": 50, "sirenState": "sounding",
+    "dispatchState": "held", "cancelledAt": None, "endedAt": None, "details": None,
+}
+EVENT_SENSOR = "sensor.z_wave_alarm_alarm_event"
+SIREN_SENSOR = "binary_sensor.z_wave_alarm_siren_sounding"
+
+
+async def test_alarm_event_entities_follow_the_snapshot_and_the_stream(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.alarm_events = [BURGLARY_EVENT]
+    await setup()
+    await _settle(hass, service)
+
+    event = await _entity(hass, EVENT_SENSOR)
+    assert event.state == "burglary"
+    assert event.attributes["siren_state"] == "sounding"
+    assert event.attributes["dispatch_state"] == "held"
+    assert (await _entity(hass, SIREN_SENSOR)).state == "on"
+
+    await _push(hass, service, {"type": "alarm.event", "event": {**BURGLARY_EVENT, "sirenState": "silenced"}})
+    assert hass.states.get(EVENT_SENSOR).attributes["siren_state"] == "silenced"
+    assert hass.states.get(SIREN_SENSOR).state == "off"
+
+    await _push(hass, service, {"type": "alarm.event", "event": {**BURGLARY_EVENT, "endedAt": 99}})
+    assert hass.states.get(EVENT_SENSOR).state == "none"
+
+
+async def test_alarm_event_sensor_is_none_on_a_service_without_events(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert (await _entity(hass, EVENT_SENSOR)).state == "none"
+    assert hass.states.get(SIREN_SENSOR).state == "off"
+
+
+async def test_panic_action_raises_the_alarm_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "SOS", "service": "fire"}, blocking=True)
+
+    assert service.panic_calls == [{"type": "SOS", "service": "fire"}]
+    assert hass.states.get(EVENT_SENSOR).state == "sos"
+    assert hass.states.get(SIREN_SENSOR).state == "on"
+
+
+async def test_medical_panic_does_not_sound_the_siren(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "MEDICAL"}, blocking=True)
+
+    assert service.panic_calls == [{"type": "MEDICAL"}]
+    assert hass.states.get(EVENT_SENSOR).state == "fire_medical"
+    assert hass.states.get(SIREN_SENSOR).state == "off"
+
+
+async def test_panic_action_rejects_an_unknown_type(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(DOMAIN, "panic", {"entity_id": ALARM, "type": "BURGLARY"}, blocking=True)
+    assert service.panic_calls == []
+
+
+async def test_silence_action_mutes_the_siren_but_keeps_the_event(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.alarm_events = [BURGLARY_EVENT]
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, SIREN_SENSOR)
+
+    await hass.services.async_call(DOMAIN, "silence", {"entity_id": ALARM}, blocking=True)
+
+    assert service.silence_calls == 1
+    assert hass.states.get(SIREN_SENSOR).state == "off"
+    assert hass.states.get(EVENT_SENSOR).state == "burglary"
+
+
+async def test_silence_with_nothing_sounding_raises(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.silence_status = 409
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "silence", {"entity_id": ALARM}, blocking=True)

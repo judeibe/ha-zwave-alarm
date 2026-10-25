@@ -59,6 +59,9 @@
       },
       "lock_connectivity": {
         "name": "Connectivity"
+      },
+      "siren_sounding": {
+        "name": "Siren sounding"
       }
     },
     "switch": {
@@ -157,6 +160,20 @@
       },
       "bootloader_version": {
         "name": "Bootloader version"
+      },
+      "alarm_event": {
+        "name": "Alarm event",
+        "state": {
+          "none": "None",
+          "burglary": "Burglary",
+          "smoke": "Smoke",
+          "co": "Carbon monoxide",
+          "panic": "Panic",
+          "fire_medical": "Fire or medical",
+          "duress": "Duress",
+          "sos": "SOS",
+          "flood_freeze": "Flood or freeze"
+        }
       }
     }
   },
@@ -308,6 +325,24 @@
           "description": "What requested the arm. Lock, schedule and cellular-backup sources bypass faulted sensors automatically."
         }
       }
+    },
+    "panic": {
+      "name": "Raise panic alarm",
+      "description": "Raises a real alarm that sounds the siren and, per its type, requests police, fire or medical help. Use it for a panic button; it is not a test.",
+      "fields": {
+        "type": {
+          "name": "Type",
+          "description": "PANIC (police), FIRE, MEDICAL (no siren) or SOS."
+        },
+        "service": {
+          "name": "Service",
+          "description": "Which emergency service an SOS asks for. Ignored for the other types."
+        }
+      }
+    },
+    "silence": {
+      "name": "Silence siren",
+      "description": "Mutes every sounding siren. The alarm stays open and keeps its response until it is disarmed. Refused when no siren is sounding."
     }
   },
   "selector": {
@@ -351,6 +386,21 @@
         "lock": "Lock",
         "schedule": "Schedule",
         "alexa": "Alexa"
+      }
+    },
+    "panic_type": {
+      "options": {
+        "PANIC": "Panic (police)",
+        "FIRE": "Fire",
+        "MEDICAL": "Medical",
+        "SOS": "SOS"
+      }
+    },
+    "panic_service": {
+      "options": {
+        "police": "Police",
+        "fire": "Fire",
+        "medical": "Medical"
       }
     }
   },

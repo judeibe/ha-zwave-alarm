@@ -254,3 +254,32 @@ def test_panel_changed_updates_modes_and_keeps_them_when_absent() -> None:
     assert apply_event(start, changed).modes == _MODES
     new_modes = {**_MODES, "armed_home": {"entryDelaySec": 10, "exitDelaySec": 20}}
     assert apply_event(start, {**changed, "modes": new_modes}).modes == new_modes
+
+
+def _alarm_event(event_id: str, started: int, **changes) -> dict:
+    return {"id": event_id, "type": "BURGLARY", "startedAt": started, "sirenState": "sounding", "endedAt": None, **changes}
+
+
+def test_snapshot_keeps_only_the_open_alarm_events() -> None:
+    open_event, ended = _alarm_event("a", 1), _alarm_event("b", 2, endedAt=5)
+    state = apply_event(
+        StreamState(panel=None, zones=[]),
+        {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": [], "alarmEvents": [open_event, ended]},
+    )
+    assert state.alarm_events == [open_event]
+
+
+def test_alarm_event_adds_updates_and_closes_an_event() -> None:
+    state = StreamState(panel=None, zones=[])
+    state = apply_event(state, {"type": "alarm.event", "event": _alarm_event("a", 1)})
+    state = apply_event(state, {"type": "alarm.event", "event": _alarm_event("b", 2, type="SMOKE")})
+    state = apply_event(state, {"type": "alarm.event", "event": _alarm_event("a", 1, sirenState="silenced")})
+    assert [(e["id"], e["sirenState"]) for e in state.alarm_events] == [("a", "silenced"), ("b", "sounding")]
+
+    state = apply_event(state, {"type": "alarm.event", "event": _alarm_event("a", 1, endedAt=9)})
+    assert [e["id"] for e in state.alarm_events] == ["b"]
+
+
+def test_a_snapshot_from_an_older_service_has_no_alarm_events() -> None:
+    state = apply_event(StreamState(panel=None, zones=[]), {"type": "snapshot", "panel": {"mode": "disarmed"}, "zones": []})
+    assert state.alarm_events == []

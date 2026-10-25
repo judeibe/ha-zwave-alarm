@@ -562,3 +562,36 @@ async def test_arm_resends_with_bypass_and_the_app_source(hass, hass_ws_client, 
 async def test_arm_rejects_disarmed_as_a_mode(hass, hass_ws_client, entry) -> None:
     resp = await _send(await hass_ws_client(hass), "arm", mode="disarmed")
     assert not resp["success"]
+
+
+async def test_panic_command_raises_the_alarm_through_the_coordinator(hass, hass_ws_client, entry) -> None:
+    panic = AsyncMock(return_value={"id": "e1", "type": "PANIC"})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_panic=panic, data=None)
+    resp = await _send(await hass_ws_client(hass), "panic", kind="SOS", service="medical")
+    assert resp["result"] == {"id": "e1", "type": "PANIC"}
+    panic.assert_awaited_once_with("SOS", "medical")
+
+
+async def test_panic_command_rejects_an_unknown_kind(hass, hass_ws_client, entry) -> None:
+    resp = await _send(await hass_ws_client(hass), "panic", kind="BURGLARY")
+    assert not resp["success"]
+
+
+async def test_silence_command_returns_the_silenced_events(hass, hass_ws_client, entry) -> None:
+    silence = AsyncMock(return_value=[{"id": "e1", "sirenState": "silenced"}])
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_silence=silence, data=None)
+    resp = await _send(await hass_ws_client(hass), "silence")
+    assert resp["result"] == {"silenced": [{"id": "e1", "sirenState": "silenced"}]}
+
+
+async def test_overview_lists_the_open_alarm_events(hass, hass_ws_client, entry) -> None:
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+        data=SimpleNamespace(alarm_events=[{"id": "e1"}], keypads=[], keypad_settings=None, modes=None, panel=None, locks=[])
+    )
+    with (
+        patch(f"{API}.async_get_zones", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_discoverable_sensors", AsyncMock(return_value=[])),
+        patch(f"{API}.async_list_users", AsyncMock(return_value=[])),
+    ):
+        resp = await _send(await hass_ws_client(hass), "overview")
+    assert resp["result"]["alarm_events"] == [{"id": "e1"}]
