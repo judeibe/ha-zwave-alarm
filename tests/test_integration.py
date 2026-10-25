@@ -84,6 +84,9 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.code_calls: list[tuple] = []
+        self.code_status = 204
+        self.code_error = "code_in_use"
         self.sirens: list[dict] | None = None  # the snapshot's `sirens`; None leaves it out like an older service
         self.siren_calls: list[tuple] = []
         self.siren_status = 200
@@ -153,6 +156,25 @@ class FakeService:
         self._note(request)
         self.siren_calls.append(("delete", int(request.match_info["node_id"])))
         return web.Response(status=204)
+
+    async def user_code(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json() if request.can_read_body else {}
+        self.code_calls.append((request.method, request.match_info["user_id"], request.path.rsplit("/", 1)[-1], body))
+        if self.code_status == 204:
+            return web.Response(status=204)
+        return web.json_response({"error": {"code": self.code_error, "message": "nope"}}, status=self.code_status)
+
+    async def create_user(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.code_calls.append(("POST", "", "users", body))
+        if self.code_status != 204:
+            return web.json_response({"error": {"code": self.code_error, "message": "nope"}}, status=self.code_status)
+        return web.json_response(
+            {"id": "u-new", "name": body["name"], "role": body["role"], "guestExpiresAt": 1700172800000, "hasCode": True},
+            status=201,
+        )
 
     async def arm(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -271,6 +293,9 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/keypads/{node_id}/chime", fake.chime)
     app.router.add_put("/api/v1/sirens/{node_id}", fake.put_siren)
     app.router.add_delete("/api/v1/sirens/{node_id}", fake.delete_siren)
+    app.router.add_post("/api/v1/users", fake.create_user)
+    app.router.add_route("*", "/api/v1/users/{user_id}/code", fake.user_code)
+    app.router.add_route("*", "/api/v1/users/{user_id}/duress-code", fake.user_code)
     app.router.add_post("/api/v1/panel/arm", fake.arm)
     app.router.add_post("/api/v1/panel/panic", fake.panic)
     app.router.add_post("/api/v1/panel/silence", fake.silence)
@@ -1608,3 +1633,80 @@ async def test_tamper_sensor_is_unknown_on_a_service_that_does_not_report_it(has
     await _settle(hass, service)
 
     assert (await _entity(hass, TAMPER)).state == "unknown"
+
+
+async def test_set_user_code_action_sends_both_codes_and_logs_neither(hass: HomeAssistant, service: FakeService, setup, caplog) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "set_user_code", {"user_id": "u1", "code": "4821", "confirm_code": "4821"}, blocking=True)
+
+    assert service.code_calls == [("PUT", "u1", "code", {"code": "4821", "confirmCode": "4821"})]
+    assert "4821" not in caplog.text
+
+
+async def test_clear_user_code_and_the_duress_code_actions(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "clear_user_code", {"user_id": "u1"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "set_duress_code", {"user_id": "u1", "code": "2468"}, blocking=True)
+    await hass.services.async_call(DOMAIN, "clear_duress_code", {"user_id": "u1"}, blocking=True)
+
+    assert [(m, path) for m, _, path, _ in service.code_calls] == [("DELETE", "code"), ("PUT", "duress-code"), ("DELETE", "duress-code")]
+    assert service.code_calls[1][3] == {"code": "2468"}
+
+
+@pytest.mark.parametrize("bad", ["123", "12345", "12a4", ""])
+async def test_code_actions_reject_a_code_that_is_not_four_digits_without_quoting_it(
+    hass: HomeAssistant, service: FakeService, setup, bad
+) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(DOMAIN, "set_user_code", {"user_id": "u1", "code": bad}, blocking=True)
+    assert bad == "" or bad not in str(err.value)
+    assert service.code_calls == []
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "message"),
+    [(409, "code_in_use", "already uses that code"), (409, "code_limit", "most codes"), (429, "too_many_requests", "rate limiting")],
+)
+async def test_code_actions_explain_a_refused_code(
+    hass: HomeAssistant, service: FakeService, setup, status, error, message
+) -> None:
+    service.code_status, service.code_error = status, error
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises((ServiceValidationError, HomeAssistantError), match=message):
+        await hass.services.async_call(DOMAIN, "set_user_code", {"user_id": "u1", "code": "4821"}, blocking=True)
+
+
+async def test_create_installer_returns_the_expiry_but_never_the_code(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    result = await hass.services.async_call(
+        DOMAIN, "create_installer", {"name": "Pat", "code": "4821", "confirm_code": "4821"}, blocking=True, return_response=True
+    )
+
+    assert result == {"user_id": "u-new", "name": "Pat", "role": "installer", "expires_at": 1700172800000}
+    assert "4821" not in str(result)
+    assert service.code_calls == [("POST", "", "users", {"name": "Pat", "role": "installer", "code": "4821", "confirmCode": "4821"})]
+
+
+async def test_code_actions_are_administrator_only(hass: HomeAssistant, service: FakeService, setup, hass_read_only_user) -> None:
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(
+            DOMAIN, "set_user_code", {"user_id": "u1", "code": "4821"}, blocking=True, context=Context(user_id=hass_read_only_user.id)
+        )
+    assert service.code_calls == []

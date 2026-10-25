@@ -316,3 +316,63 @@ remove_siren:
         number:
           min: 1
           mode: box
+set_user_code:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+    code:
+      required: true
+      selector:
+        text:
+          type: password
+    confirm_code:
+      required: false
+      selector:
+        text:
+          type: password
+clear_user_code:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+set_duress_code:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+    code:
+      required: true
+      selector:
+        text:
+          type: password
+    confirm_code:
+      required: false
+      selector:
+        text:
+          type: password
+clear_duress_code:
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+create_installer:
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    code:
+      required: true
+      selector:
+        text:
+          type: password
+    confirm_code:
+      required: false
+      selector:
+        text:
+          type: password

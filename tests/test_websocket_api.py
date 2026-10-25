@@ -221,10 +221,10 @@ async def test_non_admin_is_refused(hass, hass_ws_client, hass_admin_user, entry
 
 async def test_set_code_passes_code_but_never_returns_it(hass, hass_ws_client, entry) -> None:
     with patch(f"{API}.async_set_user_code", AsyncMock(return_value=None)) as set_code:
-        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="123456")
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="1234", confirm_code="1234")
     assert resp["success"] and resp["result"] is None
-    assert "123456" not in str(resp)
-    assert set_code.await_args.args[-2:] == ("u1", "123456")
+    assert "1234" not in str(resp)
+    assert set_code.await_args.args[-3:] == ("u1", "1234", "1234")
 
 
 @pytest.mark.parametrize("code", ["12", "1234567890123", "12a456", "", 1234])
@@ -633,3 +633,48 @@ async def test_overview_lists_the_enrolled_sirens(hass, hass_ws_client, entry) -
     ):
         resp = await _send(await hass_ws_client(hass), "overview")
     assert resp["result"]["sirens"] == [{"nodeId": 14}]
+
+
+@pytest.mark.parametrize("code", ["12345", "123456789", "123"])
+async def test_a_persons_code_must_be_exactly_four_digits(hass, hass_ws_client, entry, code) -> None:
+    # Passes the 4-12 digit wire check (locks use it) but not the people rule; the value is never echoed.
+    with patch(f"{API}.async_set_user_code", AsyncMock()) as set_code:
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code=code)
+    assert not resp["success"] and resp["error"]["code"] == "invalid_code"
+    assert code not in str(resp)
+    set_code.assert_not_called()
+
+
+async def test_a_confirm_code_must_also_be_four_digits(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_set_user_code", AsyncMock()) as set_code:
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="1234", confirm_code="99999")
+    assert resp["error"]["code"] == "invalid_code" and "99999" not in str(resp)
+    set_code.assert_not_called()
+
+
+async def test_user_create_sends_confirm_code_and_accepts_the_installer_role(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_create_user", AsyncMock(return_value={"id": "u9", "role": "installer"})) as create:
+        resp = await _send(await hass_ws_client(hass), "user/create", name="Pat", role="installer", code="4321", confirm_code="4321")
+    assert resp["result"] == {"id": "u9", "role": "installer"}
+    assert create.await_args.kwargs["confirm_code"] == "4321"
+    assert create.await_args.args[-3:] == ("Pat", "installer", "4321")
+
+
+async def test_duress_code_commands_call_the_service_and_never_echo_the_code(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_set_duress_code", AsyncMock(return_value=None)) as put:
+        resp = await _send(await hass_ws_client(hass), "user/set_duress_code", user_id="u1", code="2468", confirm_code="2468")
+    assert resp["success"] and "2468" not in str(resp)
+    assert put.await_args.args[-3:] == ("u1", "2468", "2468")
+    with patch(f"{API}.async_delete_duress_code", AsyncMock(return_value=None)) as delete:
+        resp = await _send(await hass_ws_client(hass), "user/clear_duress_code", user_id="u1")
+    assert resp["success"] and delete.await_args.args[-1] == "u1"
+
+
+@pytest.mark.parametrize(
+    ("exc", "code"),
+    [(api.CodeLimit("full"), "code_limit"), (api.CodeInUse("dup"), "code_in_use"), (api.TooManyRequests("slow"), "too_many_requests")],
+)
+async def test_code_errors_map_to_their_own_codes(hass, hass_ws_client, entry, exc, code) -> None:
+    with patch(f"{API}.async_set_duress_code", AsyncMock(side_effect=exc)):
+        resp = await _send(await hass_ws_client(hass), "user/set_duress_code", user_id="u1", code="2468")
+    assert resp["error"]["code"] == code
