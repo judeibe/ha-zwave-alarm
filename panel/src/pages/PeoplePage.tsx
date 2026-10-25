@@ -7,6 +7,7 @@ import { clearUserCode, removeUser, setDuressCode } from "../patches";
 import type { AlarmUser, HaPerson, Role } from "../types";
 import { useConfirm } from "../ui/Confirm";
 import { Gone } from "../ui/Gone";
+import { GuestSchedules } from "./GuestSchedules";
 import { InsetList, ListRow } from "../ui/List";
 import { Sheet, useRemembered, useSheet } from "../ui/Sheet";
 import { useAction } from "../useAction";
@@ -190,6 +191,7 @@ function PersonForm({ person, user }: { person: HaPerson; user?: AlarmUser }) {
           </Actions>
         </>
       )}
+      {user.role === "guest" && <GuestSchedules userId={user.id} name={person.name} />}
       <Actions>
         <Button
           variant="danger"

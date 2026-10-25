@@ -579,3 +579,69 @@ describe("sirens and tamper", () => {
     expect(await screen.findByText("tampered")).toBeInTheDocument();
   });
 });
+
+describe("guest schedules", () => {
+  const guest = { ...OVERVIEW, users: [{ id: "g1", name: "Alex", role: "guest" as const, hasCode: true, haPersonId: "person.alex", haUserId: null }] };
+  const cleaners = { id: "sch1", userId: "g1", name: "Cleaners", days: ["mon", "thu"], allDay: false, start: "08:00", end: "17:30", timeZone: "America/Chicago" };
+
+  it("offers schedules only to a guest", async () => {
+    setup("/people/person.alex"); // a member
+    await screen.findByLabelText("Code");
+    expect(screen.queryByText("Keypad schedule")).not.toBeInTheDocument();
+  });
+
+  it("lists a guest's schedules, or says there is unlimited access", async () => {
+    setup("/people/person.alex", {}, guest, { "guest_schedule/list": [cleaners] });
+    expect(await screen.findByText("Cleaners")).toBeInTheDocument();
+    expect(screen.getByText("Mon, Thu · 08:00–17:30")).toBeInTheDocument();
+    document.body.replaceChildren();
+    setup("/people/person.alex", {}, guest, { "guest_schedule/list": [] });
+    expect(await screen.findByText(/code works at any time/)).toBeInTheDocument();
+  });
+
+  it("adds a timed schedule with the days picked", async () => {
+    const { call, user } = setup("/people/person.alex", {}, guest, { "guest_schedule/list": [] });
+    await user.type(await screen.findByLabelText("Schedule name"), "Cleaners");
+    expect(screen.getByRole("button", { name: "Add schedule" })).toBeDisabled(); // no day yet
+    await user.click(screen.getByRole("button", { name: "Mon" }));
+    await user.click(screen.getByRole("button", { name: "Thu" }));
+    await user.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(call).toHaveBeenCalledWith("guest_schedule/create", { user_id: "g1", name: "Cleaners", days: ["mon", "thu"], all_day: false, start: "08:00", end: "17:00" });
+  });
+
+  it("sends no times for an all-day schedule", async () => {
+    const { call, user } = setup("/people/person.alex", {}, guest, { "guest_schedule/list": [] });
+    await user.type(await screen.findByLabelText("Schedule name"), "Weekend");
+    await user.click(screen.getByRole("button", { name: "Sat" }));
+    await user.click(screen.getByRole("switch", { name: "All day" }));
+    expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(call).toHaveBeenCalledWith("guest_schedule/create", { user_id: "g1", name: "Weekend", days: ["sat"], all_day: true });
+  });
+
+  it("will not add a schedule whose start and end are the same", async () => {
+    const { user } = setup("/people/person.alex", {}, guest, { "guest_schedule/list": [] });
+    await user.type(await screen.findByLabelText("Schedule name"), "x");
+    await user.click(screen.getByRole("button", { name: "Mon" }));
+    await user.clear(screen.getByLabelText("Until"));
+    await user.type(screen.getByLabelText("Until"), "08:00");
+    expect(screen.getByRole("button", { name: "Add schedule" })).toBeDisabled();
+    expect(screen.getByText(/must differ/)).toBeInTheDocument();
+  });
+
+  it("removes a schedule once confirmed", async () => {
+    const { call, user } = setup("/people/person.alex", {}, guest, { "guest_schedule/list": [cleaners] });
+    await screen.findByText("Cleaners");
+    await user.click(within(screen.getByRole("list", { name: "Schedules" })).getByRole("button", { name: "Remove" }));
+    await user.click(confirmDialog().getByRole("button", { name: "Remove schedule" }));
+    expect(call).toHaveBeenCalledWith("guest_schedule/delete", { user_id: "g1", schedule_id: "sch1" });
+  });
+
+  it("shows the service's refusal", async () => {
+    const { user } = setup("/people/person.alex", { "guest_schedule/create": "invalid_request" }, guest, { "guest_schedule/list": [] });
+    await user.type(await screen.findByLabelText("Schedule name"), "x");
+    await user.click(screen.getByRole("button", { name: "Mon" }));
+    await user.click(screen.getByRole("button", { name: "Add schedule" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/rejected the request/);
+  });
+});

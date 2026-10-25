@@ -678,3 +678,43 @@ async def test_code_errors_map_to_their_own_codes(hass, hass_ws_client, entry, e
     with patch(f"{API}.async_set_duress_code", AsyncMock(side_effect=exc)):
         resp = await _send(await hass_ws_client(hass), "user/set_duress_code", user_id="u1", code="2468")
     assert resp["error"]["code"] == code
+
+
+async def test_guest_schedule_list_and_delete_call_the_service(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_get_guest_schedules", AsyncMock(return_value=[{"id": "s1"}])) as get:
+        resp = await _send(await hass_ws_client(hass), "guest_schedule/list", user_id="g1")
+    assert resp["result"] == [{"id": "s1"}] and get.await_args.args[-1] == "g1"
+    with patch(f"{API}.async_delete_guest_schedule", AsyncMock(return_value=None)) as delete:
+        resp = await _send(await hass_ws_client(hass), "guest_schedule/delete", user_id="g1", schedule_id="s1")
+    assert resp["success"] and delete.await_args.args[-2:] == ("g1", "s1")
+
+
+async def test_guest_schedule_create_goes_through_the_coordinator_with_trimmed_times(hass, hass_ws_client, entry) -> None:
+    create = AsyncMock(return_value={"id": "s1"})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_create_guest_schedule=create, data=None)
+    resp = await _send(
+        await hass_ws_client(hass), "guest_schedule/create", user_id="g1", name="Cleaners", days=["mon"], start="08:00:00", end="17:30"
+    )
+    assert resp["result"] == {"id": "s1"}
+    create.assert_awaited_once_with("g1", "Cleaners", ["mon"], start="08:00", end="17:30")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"days": []}, {"days": ["funday"]}, {"days": ["mon"], "start": "08:00"}, {"days": ["mon"], "start": "9", "end": "10:00"}],
+)
+async def test_guest_schedule_create_rejects_a_bad_schedule(hass, hass_ws_client, entry, payload) -> None:
+    create = AsyncMock()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_create_guest_schedule=create, data=None)
+    resp = await _send(await hass_ws_client(hass), "guest_schedule/create", user_id="g1", name="x", **payload)
+    assert not resp["success"]
+    create.assert_not_awaited()
+
+
+async def test_guest_schedule_update_sends_only_the_changed_fields(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_update_guest_schedule", AsyncMock(return_value={"id": "s1"})) as update:
+        resp = await _send(await hass_ws_client(hass), "guest_schedule/update", user_id="g1", schedule_id="s1", all_day=False)
+    assert resp["success"]  # the service re-checks it against the stored schedule
+    assert update.await_args.args[-2:] == ("g1", "s1") and update.await_args.kwargs["all_day"] is False
+    resp = await _send(await hass_ws_client(hass), "guest_schedule/update", user_id="g1", schedule_id="s1")
+    assert not resp["success"]

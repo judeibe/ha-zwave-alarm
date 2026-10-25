@@ -34,6 +34,18 @@ export interface Siren {
   durationSec: number;
   createdAt: number;
 }
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+/** When a guest's code works on the keypad. A guest with none has unlimited access. */
+export interface GuestSchedule {
+  id: string;
+  userId: string;
+  name: string;
+  days: Weekday[];
+  allDay: boolean;
+  start: string | null;
+  end: string | null;
+  timeZone: string | null;
+}
 export interface Sensor {
   id: string;
   zwaveNodeId: number;

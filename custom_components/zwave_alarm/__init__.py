@@ -33,6 +33,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import CAPABILITY_CHIME, CONF_SHOW_IN_SIDEBAR, CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_schedule, schedule_fields
 from .keypad import keypad_device_identifier
 from .lock_state import (
     CLIENT_SCHEDULE_KINDS,
@@ -76,6 +77,37 @@ USER_ID_SCHEMA = vol.Schema({vol.Required("user_id"): cv.string})
 CREATE_INSTALLER_SCHEMA = vol.Schema(
     {vol.Required(ATTR_NAME): cv.string, vol.Required(ATTR_CODE): cv.string, vol.Optional(ATTR_CONFIRM_CODE): cv.string}
 )
+
+SERVICE_LIST_GUEST_SCHEDULES = "list_guest_schedules"
+SERVICE_ADD_GUEST_SCHEDULE = "add_guest_schedule"
+SERVICE_UPDATE_GUEST_SCHEDULE = "update_guest_schedule"
+SERVICE_REMOVE_GUEST_SCHEDULE = "remove_guest_schedule"
+_GUEST_DAYS = vol.All(cv.ensure_list, [vol.In(GUEST_WEEKDAYS)])
+_TIME_OF_DAY = vol.Any(cv.time, None)
+ADD_GUEST_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Required("user_id"): cv.string,
+        vol.Required("name"): cv.string,
+        vol.Required("days"): _GUEST_DAYS,
+        vol.Optional("all_day"): cv.boolean,
+        vol.Optional("start"): _TIME_OF_DAY,
+        vol.Optional("end"): _TIME_OF_DAY,
+        vol.Optional("time_zone"): cv.string,
+    }
+)
+UPDATE_GUEST_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Required("user_id"): cv.string,
+        vol.Required("schedule_id"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("days"): _GUEST_DAYS,
+        vol.Optional("all_day"): cv.boolean,
+        vol.Optional("start"): _TIME_OF_DAY,
+        vol.Optional("end"): _TIME_OF_DAY,
+        vol.Optional("time_zone"): cv.string,
+    }
+)
+GUEST_SCHEDULE_ID_SCHEMA = vol.Schema({vol.Required("user_id"): cv.string, vol.Required("schedule_id"): cv.string})
 
 SERVICE_SET_LOCK_SCHEDULE = "set_lock_schedule"
 SERVICE_CLEAR_LOCK_SCHEDULE = "clear_lock_schedule"
@@ -256,7 +288,52 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         # Never the code: the id to manage the user with, and when the 48 hours of access end.
         return {"user_id": user["id"], "name": user["name"], "role": user["role"], "expires_at": user.get("guestExpiresAt")}
 
+    def _schedule_fields(call: ServiceCall, *, partial: bool) -> dict[str, Any]:
+        """The client's fields from an action call; a clear error for a schedule the service would refuse."""
+        data = {k: (v.strftime("%H:%M") if k in ("start", "end") and v is not None else v) for k, v in call.data.items()
+                if k in ("name", "days", "all_day", "start", "end", "time_zone")}
+        try:
+            fields = schedule_fields(data)
+            if partial:
+                check_schedule(fields.get("days"), True, None, None)
+                if fields.get("start") is not None and fields.get("start") == fields.get("end"):
+                    raise InvalidSchedule("The start and end time must differ.")
+            else:
+                check_schedule(fields["days"], fields.get("all_day", False), fields.get("start"), fields.get("end"))
+        except InvalidSchedule as err:
+            raise ServiceValidationError(str(err)) from err
+        return fields
+
+    async def _list_guest_schedules(call: ServiceCall) -> ServiceResponse:
+        return {"schedules": await _only_coordinator().async_get_guest_schedules(call.data["user_id"])}
+
+    async def _add_guest_schedule(call: ServiceCall) -> ServiceResponse:
+        fields = _schedule_fields(call, partial=False)
+        name, days = fields.pop("name"), fields.pop("days")
+        return await _only_coordinator().async_create_guest_schedule(call.data["user_id"], name, days, **fields)
+
+    async def _update_guest_schedule(call: ServiceCall) -> ServiceResponse:
+        fields = _schedule_fields(call, partial=True)
+        if not fields:
+            raise ServiceValidationError("Change at least one field.")
+        return await _only_coordinator().async_update_guest_schedule(call.data["user_id"], call.data["schedule_id"], **fields)
+
+    async def _remove_guest_schedule(call: ServiceCall) -> None:
+        await _only_coordinator().async_delete_guest_schedule(call.data["user_id"], call.data["schedule_id"])
+
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_LIST_GUEST_SCHEDULES, _list_guest_schedules, USER_ID_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_ADD_GUEST_SCHEDULE, _add_guest_schedule, ADD_GUEST_SCHEDULE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_UPDATE_GUEST_SCHEDULE, _update_guest_schedule, UPDATE_GUEST_SCHEDULE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    async_register_admin_service(hass, DOMAIN, SERVICE_REMOVE_GUEST_SCHEDULE, _remove_guest_schedule, GUEST_SCHEDULE_ID_SCHEMA)
     # Codes and users are administrator-only, like the panel's websocket commands.
     async_register_admin_service(hass, DOMAIN, SERVICE_SET_USER_CODE, _set_user_code, SET_USER_CODE_SCHEMA)
     async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_USER_CODE, _clear_user_code, USER_ID_SCHEMA)

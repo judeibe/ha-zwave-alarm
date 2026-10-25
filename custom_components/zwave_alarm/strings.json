@@ -455,6 +455,102 @@
           "description": "The same code again. The service rejects the request when they differ."
         }
       }
+    },
+    "list_guest_schedules": {
+      "name": "List guest schedules",
+      "description": "Returns a guest's keypad schedules. A guest with none has unlimited access. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The guest's id, as shown in the Z-Wave Alarm panel."
+        }
+      }
+    },
+    "add_guest_schedule": {
+      "name": "Add guest schedule",
+      "description": "Limits when a guest's code works on the keypad: outside every schedule the keypad refuses to arm or disarm. Locks do not enforce schedules. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The guest's id, as shown in the Z-Wave Alarm panel."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What to call the schedule."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Days of the week the schedule allows, at least one."
+        },
+        "all_day": {
+          "name": "All day",
+          "description": "Allow the whole day. Start and end are then not used."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When access begins. Required unless all day."
+        },
+        "end": {
+          "name": "End",
+          "description": "When access ends. An end at or before the start is an overnight window."
+        },
+        "time_zone": {
+          "name": "Time zone",
+          "description": "IANA time zone the times are in. Defaults to Home Assistant's, because the service may run in UTC."
+        }
+      }
+    },
+    "update_guest_schedule": {
+      "name": "Update guest schedule",
+      "description": "Changes a guest's keypad schedule; only the fields you pass change. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The guest's id, as shown in the Z-Wave Alarm panel."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What to call the schedule."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Days of the week the schedule allows, at least one."
+        },
+        "all_day": {
+          "name": "All day",
+          "description": "Allow the whole day. Start and end are then not used."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When access begins. Required unless all day."
+        },
+        "end": {
+          "name": "End",
+          "description": "When access ends. An end at or before the start is an overnight window."
+        },
+        "time_zone": {
+          "name": "Time zone",
+          "description": "IANA time zone the times are in. Defaults to Home Assistant's, because the service may run in UTC."
+        },
+        "schedule_id": {
+          "name": "Schedule id",
+          "description": "The id of the schedule (from list_guest_schedules)."
+        }
+      }
+    },
+    "remove_guest_schedule": {
+      "name": "Remove guest schedule",
+      "description": "Removes a keypad schedule. A guest with no schedule has unlimited access. Administrators only.",
+      "fields": {
+        "user_id": {
+          "name": "User id",
+          "description": "The guest's id, as shown in the Z-Wave Alarm panel."
+        },
+        "schedule_id": {
+          "name": "Schedule id",
+          "description": "The id of the schedule (from list_guest_schedules)."
+        }
+      }
     }
   },
   "selector": {
@@ -520,6 +616,17 @@
         "base": "Base station",
         "dome": "Dome (indoor)",
         "outdoor": "Outdoor"
+      }
+    },
+    "guest_weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
       }
     }
   },

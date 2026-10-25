@@ -10,6 +10,7 @@ export const ERROR_TEXT: Record<string, string> = {
   conflict: "That conflicts with the current configuration (for example the last administrator).",
   not_found: "That item no longer exists. The list has been refreshed.",
   invalid_request: "The service rejected the request as invalid.",
+  invalid_schedule: "That schedule isn't valid. Pick at least one day, and a start and end time that differ (or all day).",
   cannot_connect: "Cannot reach the Z-Wave Alarm service.",
   service_unavailable: "The Z-Wave Alarm service is up but its Z-Wave driver isn't ready yet.",
   invalid_auth: "The service rejected the stored token. Re-authenticate the integration.",
