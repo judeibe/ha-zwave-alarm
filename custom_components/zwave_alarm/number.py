@@ -29,6 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         lambda c, e, lock: [ZwaveAlarmLockPinLengthNumber(c, e, lock)] if lock_supports(lock, "pinLength") else [],
     )
     _async_add_delay_numbers(coordinator, entry, async_add_entities)
+    _async_add_keypad_volume(coordinator, entry, async_add_entities)
     async_add_siren_entities(
         coordinator, entry, async_add_entities,
         lambda c, e, siren: [ZwaveAlarmSirenDurationNumber(c, e, siren)] if siren_is_configurable(siren) else [],
@@ -145,3 +146,50 @@ class ZwaveAlarmSirenDurationNumber(ZwaveAlarmSirenEntity, NumberEntity):
         siren = self._siren()
         if siren is not None:
             await self.coordinator.async_put_siren(self._node_id, siren["kind"], duration_sec=int(value))
+
+
+@callback
+def _async_add_keypad_volume(
+    coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """The one keypad-wide volume, once a keypad exists and the service reports it (3.8.0+; older services don't)."""
+    added = False
+
+    @callback
+    def _add() -> None:
+        nonlocal added
+        data = coordinator.data
+        if added or data is None or not data.keypads or "volume" not in (data.keypad_settings or {}):
+            return
+        added = True
+        async_add_entities([ZwaveAlarmKeypadVolumeNumber(coordinator, entry)])
+
+    _add()
+    entry.async_on_unload(coordinator.async_add_listener(_add))
+
+
+class ZwaveAlarmKeypadVolumeNumber(CoordinatorEntity[ZwaveAlarmCoordinator], NumberEntity):
+    """Volume of the keypad's chirps, countdown tones and announcements, 0-99 (the siren is always at maximum)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "keypad_volume"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 0
+    _attr_native_max_value = 99
+    _attr_native_step = 1
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:volume-high"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_keypad_volume"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def native_value(self) -> int | None:
+        settings = self.coordinator.data.keypad_settings if self.coordinator.data is not None else None
+        value = (settings or {}).get("volume")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_update_keypad_settings(volume=int(value))

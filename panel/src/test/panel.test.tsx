@@ -799,3 +799,75 @@ describe("lock automation and code sync", () => {
     expect(await screen.findByText(/slot 3, not synced/)).toBeInTheDocument();
   });
 });
+
+describe("chirps, tones and keypad volume", () => {
+  const modes = {
+    armed_home: { entryDelaySec: 60, exitDelaySec: 60, chirpsEnabled: false },
+    armed_away: { entryDelaySec: 45, exitDelaySec: 30, chirpsEnabled: true },
+    disarmed: { chirpsEnabled: false },
+  };
+  const withSensor = (extra: object) => {
+    const [downstairs, upstairs] = OVERVIEW.zones as [Zone, Zone];
+    return { ...OVERVIEW, modes, keypad_settings: { requireCodeToArm: false, volume: 55 }, zones: [{ ...downstairs, sensors: downstairs.sensors.map((x) => ({ ...x, ...extra })) }, upstairs] } as Overview;
+  };
+
+  it("shows a chirp switch per mode and sends only the mode changed", async () => {
+    const { call, user } = setup("/", {}, withSensor({}));
+    expect(await screen.findByRole("switch", { name: "Chirps when armed away" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: "Chirps when disarmed" })).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByRole("switch", { name: "Chirps when disarmed" }));
+    expect(call).toHaveBeenCalledWith("modes/update", { disarmed: { chirpsEnabled: true } });
+  });
+
+  it("shows no chirp switches on a service older than 3.8.0", async () => {
+    setup("/");
+    await screen.findByText("Entry and exit delays");
+    expect(screen.queryByText("Sensor chirps")).not.toBeInTheDocument();
+  });
+
+  it("explains a refusal and keeps the switch as it was", async () => {
+    const { user } = setup("/", { "modes/update": "forbidden" }, withSensor({}));
+    await user.click(await screen.findByRole("switch", { name: "Chirps when armed home" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/denied/);
+    expect(screen.getByRole("switch", { name: "Chirps when armed home" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("lets an intrusion sensor choose its tone", async () => {
+    const { call, user } = setup("/sensors/s1", {}, withSensor({ chirpTone: "double_beep" }));
+    const select = await screen.findByLabelText("Chirp tone");
+    expect(select).toHaveValue("double_beep");
+    await user.selectOptions(select, "Doorbell");
+    expect(call).toHaveBeenCalledWith("sensor/update", { sensor_id: "s1", chirp_tone: "doorbell" });
+  });
+
+  it("offers no tone to a sensor without one", async () => {
+    setup("/sensors/s1", {}, withSensor({ chirpTone: null, category: "life-safety", placement: null }));
+    await screen.findByText("Z-Wave node");
+    expect(screen.queryByLabelText("Chirp tone")).not.toBeInTheDocument();
+  });
+
+  it("saves a keypad volume from 0 to 99 and refuses anything else", async () => {
+    const { call, user } = setup("/keypads", {}, withSensor({}));
+    const input = await screen.findByLabelText(/Keypad volume/);
+    expect(input).toHaveValue("55");
+    await user.clear(input);
+    await user.type(input, "100{Enter}");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(call).not.toHaveBeenCalledWith("keypad_settings/update", expect.anything());
+    await user.clear(input);
+    await user.type(input, "30{Enter}");
+    expect(call).toHaveBeenCalledWith("keypad_settings/update", { volume: 30 });
+  });
+
+  it("hides the volume on a service that does not report one", async () => {
+    setup("/keypads");
+    await screen.findByText("Arming");
+    expect(screen.queryByLabelText(/Keypad volume/)).not.toBeInTheDocument();
+  });
+
+  it("says the keypad bypass confirmation is inferred and unverified", async () => {
+    setup("/", {}, { ...OVERVIEW, panel: { state: "disarmed", armed_mode: null, pending_delay_ends_at: null } });
+    expect(await screen.findByText(/repeat the same arm within 10 seconds/)).toBeInTheDocument();
+    expect(screen.getByText(/not been verified on hardware/)).toBeInTheDocument();
+  });
+});

@@ -42,6 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
     _async_add_keypad_pin_switch(coordinator, entry, async_add_entities)
     _async_add_mode_schedule_switches(coordinator, entry, async_add_entities)
+    _async_add_chirp_switches(coordinator, entry, async_add_entities)
 
 
 @callback
@@ -212,3 +213,53 @@ class ZwaveAlarmLockModeSwitch(ZwaveAlarmLockModeEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._async_put(**{self._field: False})
+
+
+CHIRP_MODES = (("disarmed", "chirps_disarmed"), ("armed_home", "chirps_home"), ("armed_away", "chirps_away"))
+
+
+@callback
+def _async_add_chirp_switches(
+    coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    """One chirp switch per mode once the service reports `chirpsEnabled` there (3.8.0+; older services never do)."""
+    added: set[str] = set()
+
+    @callback
+    def _add() -> None:
+        data = coordinator.data
+        if data is None or data.modes is None:
+            return
+        new = [(m, k) for m, k in CHIRP_MODES if m not in added and "chirpsEnabled" in (data.modes.get(m) or {})]
+        added.update(m for m, _ in new)
+        async_add_entities(ZwaveAlarmChirpSwitch(coordinator, entry, m, k) for m, k in new)
+
+    _add()
+    entry.async_on_unload(coordinator.async_add_listener(_add))
+
+
+class ZwaveAlarmChirpSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], SwitchEntity):
+    """Whether sensors chirp on the base station and keypads in a mode. Off mutes them in that mode; only an administrator changes it."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:volume-medium"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, mode: str, key: str) -> None:
+        super().__init__(coordinator)
+        self._mode = mode
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def is_on(self) -> bool | None:
+        modes = self.coordinator.data.modes if self.coordinator.data is not None else None
+        value = (modes or {}).get(self._mode, {}).get("chirpsEnabled")
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_modes({self._mode: {"chirpsEnabled": True}})
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_update_modes({self._mode: {"chirpsEnabled": False}})

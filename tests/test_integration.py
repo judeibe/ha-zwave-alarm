@@ -84,6 +84,8 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.sensor_calls: list[tuple] = []
+        self.sensor_status = 200
         self.mode_schedule_calls: list[tuple] = []
         self.mode_schedules: list[dict] | None = None  # the snapshot's `modeSchedules`; None leaves it out like an older service
         self.mode_schedule_status = 200
@@ -252,6 +254,16 @@ class FakeService:
              "bypassedDeviceIds": body.get("bypass", [])}
         )
 
+    async def patch_sensor(self, request: web.Request) -> web.Response:
+        self._note(request)
+        body = await request.json()
+        self.sensor_calls.append((request.match_info["sensor_id"], body))
+        if self.sensor_status != 200:
+            return web.json_response({"error": {"code": "forbidden", "message": "no"}}, status=self.sensor_status)
+        sensor = next(x for z in self.zones for x in z["sensors"] if x["id"] == request.match_info["sensor_id"])
+        sensor.update(body)
+        return web.json_response(sensor)
+
     async def patch_modes(self, request: web.Request) -> web.Response:
         self._note(request)
         body = await request.json()
@@ -370,6 +382,7 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/panel/panic", fake.panic)
     app.router.add_post("/api/v1/panel/silence", fake.silence)
     app.router.add_patch("/api/v1/modes", fake.patch_modes)
+    app.router.add_patch("/api/v1/sensors/{sensor_id}", fake.patch_sensor)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
     app.router.add_put("/api/v1/locks/{node_id}/state", fake.lock_state)
@@ -2119,3 +2132,130 @@ async def test_clear_user_code_returns_the_lock_results_and_an_older_service_ret
     service.lock_sync = [{"nodeId": 21, "slot": 3, "status": "synced"}]
     new = await hass.services.async_call(DOMAIN, "clear_user_code", {"user_id": "u1"}, blocking=True, return_response=True)
     assert new["lock_sync"][0]["status"] == "synced"
+
+
+def _with_chirps(service: FakeService) -> FakeService:
+    service.modes = {
+        "armed_home": {"entryDelaySec": 60, "exitDelaySec": 60, "chirpsEnabled": False},
+        "armed_away": {"entryDelaySec": 45, "exitDelaySec": 30, "chirpsEnabled": True},
+        "disarmed": {"chirpsEnabled": False},
+    }
+    service.keypad_settings = {"requireCodeToArm": False, "volume": 55}
+    service.zones[0]["sensors"][0]["chirpTone"] = "double_beep"
+    return service
+
+
+async def test_chirp_switches_follow_the_snapshot_and_a_service_without_chirps_gets_none(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+
+    assert (await _entity(hass, "switch.z_wave_alarm_chirps_when_armed_away")).state == "on"
+    assert hass.states.get("switch.z_wave_alarm_chirps_when_armed_home").state == "off"
+    assert hass.states.get("switch.z_wave_alarm_chirps_when_disarmed").state == "off"
+
+
+async def test_no_chirp_switches_before_service_3_8(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert not [s for s in hass.states.async_all() if "chirps_when" in s.entity_id]
+
+
+async def test_chirp_switch_sends_only_its_mode_and_follows_panel_changed(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "switch.z_wave_alarm_chirps_when_disarmed")
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.z_wave_alarm_chirps_when_disarmed"}, blocking=True)
+    assert service.modes_calls == [{"disarmed": {"chirpsEnabled": True}}]
+    assert hass.states.get("switch.z_wave_alarm_chirps_when_disarmed").state == "on"
+
+    await _push(hass, service, {"type": "panel.changed", "mode": "disarmed", "pendingDelayEndsAt": None,
+                                "modes": {**service.modes, "armed_away": {**service.modes["armed_away"], "chirpsEnabled": False}}})
+    assert hass.states.get("switch.z_wave_alarm_chirps_when_armed_away").state == "off"
+
+
+async def test_a_refused_chirp_change_says_it_needs_an_administrator_and_keeps_the_value(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    service.modes_status = 403
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "switch.z_wave_alarm_chirps_when_disarmed")
+
+    with pytest.raises(HomeAssistantError, match="only lets an administrator make this mode setting"):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.z_wave_alarm_chirps_when_disarmed"}, blocking=True)
+    assert hass.states.get("switch.z_wave_alarm_chirps_when_disarmed").state == "off"
+
+
+async def test_each_intrusion_sensor_gets_a_chirp_tone_select_and_life_safety_gets_none(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    service.zones[0]["sensors"].append({**service.zones[0]["sensors"][0], "id": "s2", "name": "Smoke", "category": "life-safety", "chirpTone": None})
+    await setup()
+    await _settle(hass, service)
+
+    tone = await _entity(hass, "select.zwave_alarm_chirp_front_door")
+    assert tone.state == "double_beep" and "doorbell" in tone.attributes["options"]
+    assert hass.states.get("select.zwave_alarm_chirp_smoke") is None
+
+
+async def test_choosing_a_chirp_tone_patches_the_sensor_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "select.zwave_alarm_chirp_front_door")
+
+    await hass.services.async_call("select", "select_option", {"entity_id": "select.zwave_alarm_chirp_front_door", "option": "none"}, blocking=True)
+
+    assert service.sensor_calls == [("s1", {"chirpTone": "none"})]
+    assert hass.states.get("select.zwave_alarm_chirp_front_door").state == "none"
+
+
+async def test_the_chirp_tone_action_and_a_refusal(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "set_sensor_chirp_tone", {"sensor_id": "s1", "tone": "guitar"}, blocking=True)
+    assert service.sensor_calls == [("s1", {"chirpTone": "guitar"})]
+    service.sensor_status = 403
+    with pytest.raises(HomeAssistantError, match="administrator"):
+        await hass.services.async_call(DOMAIN, "set_sensor_chirp_tone", {"sensor_id": "s1", "tone": "doorbell"}, blocking=True)
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(DOMAIN, "set_sensor_chirp_tone", {"sensor_id": "s1", "tone": "siren"}, blocking=True)
+
+
+async def test_keypad_volume_number_follows_the_snapshot_and_writes(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+
+    assert (await _entity(hass, "number.z_wave_alarm_keypad_volume")).state == "55"
+    await hass.services.async_call("number", "set_value", {"entity_id": "number.z_wave_alarm_keypad_volume", "value": 20}, blocking=True)
+    assert service.keypad_settings_calls == [{"volume": 20}]
+    assert hass.states.get("number.z_wave_alarm_keypad_volume").state == "20"
+    await _push(hass, service, {"type": "keypad.settings", "settings": {"requireCodeToArm": False, "volume": 70}})
+    assert hass.states.get("number.z_wave_alarm_keypad_volume").state == "70"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("number", "set_value", {"entity_id": "number.z_wave_alarm_keypad_volume", "value": 120}, blocking=True)
+
+
+async def test_no_keypad_volume_before_service_3_8(hass: HomeAssistant, service: FakeService, setup) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert hass.states.get("number.z_wave_alarm_keypad_volume") is None
+
+
+async def test_chirps_and_volume_actions(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _with_chirps(service)
+    await setup()
+    await _settle(hass, service)
+
+    await hass.services.async_call(DOMAIN, "set_chirps", {"mode": "armed_home", "enabled": True}, blocking=True)
+    assert service.modes_calls == [{"armed_home": {"chirpsEnabled": True}}]
+    await hass.services.async_call(DOMAIN, "set_keypad_volume", {"volume": 33}, blocking=True)
+    assert service.keypad_settings_calls == [{"volume": 33}]
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(DOMAIN, "set_keypad_volume", {"volume": 100}, blocking=True)

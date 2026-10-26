@@ -39,6 +39,12 @@ export const updateSensor = (sensorId: string, changes: Partial<Sensor>): Patch 
 export const setModeDelays = (mode: ArmedModeKey, changes: Partial<ModeDelays>): Patch => (o) =>
   o.modes ? { ...o, modes: { ...o.modes, [mode]: { ...o.modes[mode], ...changes } } } : o;
 
+export const setModeChirps = (mode: ArmedModeKey | "disarmed", chirpsEnabled: boolean): Patch => (o) =>
+  o.modes ? { ...o, modes: { ...o.modes, [mode]: { ...o.modes[mode], chirpsEnabled } } as typeof o.modes } : o;
+
+export const setKeypadVolume = (volume: number): Patch => (o) =>
+  o.keypad_settings ? { ...o, keypad_settings: { ...o.keypad_settings, volume } } : o;
+
 export const setDuressCode = (userId: string, hasDuressCode: boolean): Patch => (o) => ({
   ...o,
   users: o.users.map((u) => (u.id === userId ? { ...u, hasDuressCode } : u)),

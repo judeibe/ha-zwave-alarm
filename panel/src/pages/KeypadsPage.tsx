@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router";
-import { ErrorBanner, Hint, Pill, SectionTitle, EmptyState, Switch } from "../components";
+import { ErrorBanner, FIELD, Hint, Pill, SectionTitle, EmptyState, Switch } from "../components";
 import { useApi } from "../context";
 import { useOverview } from "../overview";
-import { setKeypadRequireCode } from "../patches";
+import { setKeypadRequireCode, setKeypadVolume } from "../patches";
 import type { Keypad } from "../types";
 import { InsetList, ListRow } from "../ui/List";
 import { useAction } from "../useAction";
@@ -62,10 +63,47 @@ export function KeypadsPage() {
       ) : (
         <Hint>Keypad settings are not available yet. They need the Z-Wave Alarm service with keypad settings and a connection to it.</Hint>
       )}
+      {settings?.volume !== undefined && <VolumeField volume={settings.volume} />}
       <Hint>
         Disarming from a keypad always needs a PIN. PINs belong to people: set or change them on the{" "}
         <Link to="/people" className="font-medium text-accent underline dark:text-accent-dark">People</Link> page.
       </Hint>
     </section>
+  );
+}
+
+/** Volume of the keypad's chirps, countdown tones and announcements, 0-99. The siren always sounds at maximum. */
+function VolumeField({ volume }: { volume: number }) {
+  const api = useApi();
+  const { run, error } = useAction();
+  const [draft, setDraft] = useState(String(volume));
+  const parsed = Number(draft);
+  const valid = draft.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= 99;
+  const save = () => {
+    if (valid && parsed !== volume) run(() => api.call("keypad_settings/update", { volume: parsed }), { patch: setKeypadVolume(parsed), done: "Volume saved" });
+  };
+  return (
+    <>
+      <SectionTitle>Sound</SectionTitle>
+      <ErrorBanner message={error} />
+      <InsetList label="Keypad sound">
+        <li className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+          <label htmlFor="keypad-volume" className="min-w-0 flex-1">
+            <span className="block text-[17px] leading-snug">Keypad volume</span>
+            <span className="block text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">Chirps, countdown tones and announcements, 0 to 99. The siren is always at maximum.</span>
+          </label>
+          <input
+            id="keypad-volume"
+            className={`${FIELD} w-24 text-right`}
+            inputMode="numeric"
+            aria-invalid={!valid}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          />
+        </li>
+      </InsetList>
+    </>
   );
 }

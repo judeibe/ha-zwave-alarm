@@ -5,7 +5,7 @@ import { Actions, Button, EmptyState, ErrorBanner, FIELD, Field, Hint, Pill, Sec
 import { useApi } from "../context";
 import { moveSensor, removeSensor, updateSensor } from "../patches";
 import { useOverview } from "../overview";
-import type { Category, Placement } from "../types";
+import type { Category, ChirpTone, Placement } from "../types";
 import { useConfirm } from "../ui/Confirm";
 import { DetailRow, InsetList, ListRow } from "../ui/List";
 import { Gone } from "../ui/Gone";
@@ -21,6 +21,10 @@ const PLACEMENTS: { value: Placement; label: string; hint: string }[] = [
   { value: "WINDOW", label: "Window", hint: "Alarms immediately." },
   { value: "ROOM", label: "Room", hint: "Motion that alarms immediately." },
   { value: "GLASS_BREAK", label: "Glass break", hint: "Alarms immediately." },
+];
+const TONES: { value: ChirpTone; label: string }[] = [
+  { value: "none", label: "None (silent)" }, { value: "double_beep", label: "Double beep" }, { value: "guitar", label: "Guitar" },
+  { value: "wind_chimes", label: "Wind chimes" }, { value: "bing_bong", label: "Bing bong" }, { value: "doorbell", label: "Doorbell" },
 ];
 const placementLabel = (p: Placement | null | undefined) => PLACEMENTS.find((x) => x.value === p)?.label;
 
@@ -193,6 +197,23 @@ function SensorDetail({ zone, sensor }: { zone: { id: string; name: string }; se
             </Select>
           </Field>
           <Hint>{PLACEMENTS.find((p) => p.value === sensor.placement)?.hint}</Hint>
+          {sensor.chirpTone != null && (
+            <Field label="Chirp tone">
+              <Select
+                value={sensor.chirpTone}
+                onChange={(e) => {
+                  const chirpTone = e.target.value as ChirpTone;
+                  run(() => api.call("sensor/update", { sensor_id: sensor.id, chirp_tone: chirpTone }), { patch: updateSensor(sensor.id, { chirpTone }), done: "Tone saved" });
+                }}
+              >
+                {TONES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <InsetList label="Armed in">
             {(["home", "away"] as const).map((mode) => {
               const key = mode === "home" ? "armedHome" : "armedAway";
