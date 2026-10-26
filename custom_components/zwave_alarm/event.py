@@ -50,6 +50,12 @@ SECURITY_EVENT_TYPES = [
     "mode_schedule_removed",
     "mode_schedule_applied",
     "mode_schedule_skipped",
+    # service 3.7.0: a lock's bolt and connection; `device_id` is "node-<n>"
+    "lock_locked",
+    "lock_unlocked",
+    "lock_jammed",
+    "lock_offline",
+    "lock_online",
 ]
 
 

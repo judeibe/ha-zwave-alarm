@@ -11,6 +11,7 @@ const KINDS: [string, string][] = [
   ["tamper,tamper_cleared,device_fault", "Faults and tamper"],
   ["code_added,code_changed,code_removed,duress_code_set,duress_code_removed,guest_code_used,lockout", "Codes"],
   ["guest_schedule_added,guest_schedule_updated,guest_schedule_removed", "Guest schedules"],
+  ["lock_locked,lock_unlocked,lock_jammed,lock_offline,lock_online", "Locks"],
   ["mode_schedule_added,mode_schedule_updated,mode_schedule_removed,mode_schedule_applied,mode_schedule_skipped", "Mode schedules"],
 ];
 const label = (type: string) => type.replaceAll("_", " ");
