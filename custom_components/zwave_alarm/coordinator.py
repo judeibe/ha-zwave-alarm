@@ -41,6 +41,7 @@ from .coordinator_state import (
     security_event_payload,
 )
 from .keypad_state import keypad_event_payload
+from .lock_mode_state import lock_event_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         self._secure = secure
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self._keypad_event_listeners: list[Callable[[int, str, dict[str, Any]], None]] = []
+        self._lock_event_listeners: list[Callable[[int, str, dict[str, Any]], None]] = []
 
     @callback
     def async_add_security_event_listener(
@@ -100,6 +102,17 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
         return _remove
 
+    @callback
+    def async_add_lock_event_listener(self, listener: Callable[[int, str, dict[str, Any]], None]) -> CALLBACK_TYPE:
+        """Register `listener(node_id, kind, attributes)` for every `lock.event`; returns an unsubscribe callback."""
+        self._lock_event_listeners.append(listener)
+
+        @callback
+        def _remove() -> None:
+            self._lock_event_listeners.remove(listener)
+
+        return _remove
+
     async def _call_client(self, call: Awaitable[T], what: str) -> T:
         """Await a client call, mapping its errors to Home Assistant ones (`what` names the rejected action)."""
         try:
@@ -108,6 +121,10 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError(f"The Z-Wave Alarm service could not find the target: {err}") from err
         except api.BadRequest as err:
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
+        except api.Forbidden as err:
+            raise HomeAssistantError(
+                f"The Z-Wave Alarm service only lets an administrator or installer make this {what} change."
+            ) from err
         except api.ScheduleConflict as err:  # a Conflict subclass: must precede the generic handler
             other = f" ({err.conflicts_with})" if err.conflicts_with else ""
             raise ServiceValidationError(f"Another enabled schedule{other} would run at the same time. Change the time or days, or turn the other off.") from err
@@ -192,15 +209,15 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
     # Codes below are passed straight to the service and are never logged, stored or put in an error message: the
     # client's errors carry the service's message, which never contains a code.
 
-    async def async_set_user_code(self, user_id: str, code: str, confirm_code: str | None) -> None:
-        """Set or replace a user's code via `PUT /api/v1/users/{id}/code`."""
-        await self._call_client(
+    async def async_set_user_code(self, user_id: str, code: str, confirm_code: str | None) -> list[dict[str, Any]]:
+        """Set or replace a user's code via `PUT /api/v1/users/{id}/code`; returns each lock's sync result (3.7.0+, else `[]`)."""
+        return await self._call_client(
             api.async_set_user_code(self._session, self._host, self._port, None, user_id, code, confirm_code, secure=self._secure),
             "code",
         )
 
-    async def async_clear_user_code(self, user_id: str) -> None:
-        await self._call_client(
+    async def async_clear_user_code(self, user_id: str) -> list[dict[str, Any]]:
+        return await self._call_client(
             api.async_clear_user_code(self._session, self._host, self._port, None, user_id, secure=self._secure), "code"
         )
 
@@ -315,6 +332,23 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         self.async_set_updated_data(replace(current, modes=modes))
         return modes
 
+    def lock_names(self) -> dict[int, str]:
+        """Display names of the enrolled locks, by node id, for describing a sync result."""
+        locks = self.data.locks if self.data is not None else []
+        return {lk["nodeId"]: lk.get("label") or f"Lock {lk['nodeId']}" for lk in locks}
+
+    async def async_put_lock_mode_settings(self, node_id: int, **fields: Any) -> dict[str, Any]:
+        """Change a lock's alarm automation via `PUT /api/v1/locks/{nodeId}/mode-settings` (administrator or installer)."""
+        settings = await self._call_client(
+            api.async_put_lock_mode_settings(self._session, self._host, self._port, None, node_id, secure=self._secure, **fields),
+            "lock automation",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        lock = next((lk for lk in current.locks if lk["nodeId"] == node_id), None)
+        if lock is not None:
+            self.async_set_updated_data(apply_event(current, {"type": "lock.changed", "lock": {**lock, "modeSettings": settings}}))
+        return settings
+
     async def async_update_lock_settings(self, node_id: int, **changes: Any) -> None:
         """Write lock settings via `PATCH /api/v1/locks/{nodeId}/settings` and publish the returned lock at once."""
         lock = await self._call_client(
@@ -418,6 +452,13 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             event_type, attributes = security_event_payload(event)
             for listener in list(self._event_listeners):
                 listener(event_type, attributes)
+            return
+
+        if event["type"] == "lock.event":
+            lock_payload = lock_event_payload(event)
+            if lock_payload is not None:
+                for lock_listener in list(self._lock_event_listeners):
+                    lock_listener(*lock_payload)
             return
 
         if event["type"] == "keypad.event":

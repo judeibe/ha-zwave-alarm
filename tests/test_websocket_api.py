@@ -220,9 +220,9 @@ async def test_non_admin_is_refused(hass, hass_ws_client, hass_admin_user, entry
 
 
 async def test_set_code_passes_code_but_never_returns_it(hass, hass_ws_client, entry) -> None:
-    with patch(f"{API}.async_set_user_code", AsyncMock(return_value=None)) as set_code:
+    with patch(f"{API}.async_set_user_code", AsyncMock(return_value=[])) as set_code:
         resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="1234", confirm_code="1234")
-    assert resp["success"] and resp["result"] is None
+    assert resp["success"] and resp["result"] == {"lock_sync": []}
     assert "1234" not in str(resp)
     assert set_code.await_args.args[-3:] == ("u1", "1234", "1234")
 
@@ -771,3 +771,40 @@ async def test_mode_schedule_list_and_delete(hass, hass_ws_client, entry) -> Non
     resp = await _send(await hass_ws_client(hass), "mode_schedule/delete", schedule_id="m1")
     assert resp["success"]
     delete.assert_awaited_once_with("m1")
+
+
+async def test_set_code_returns_each_locks_sync_result_but_never_the_code(hass, hass_ws_client, entry) -> None:
+    sync = [{"nodeId": 44, "slot": 3, "status": "synced"}, {"nodeId": 45, "slot": 3, "status": "failed", "message": "lock asleep"}]
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(lock_names=lambda: {44: "Front door"}, data=None)
+    with patch(f"{API}.async_set_user_code", AsyncMock(return_value=sync)):
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="4821", confirm_code="4821")
+    assert resp["result"]["lock_sync"] == [
+        {"node_id": 44, "lock": "Front door", "slot": 3, "status": "synced"},
+        {"node_id": 45, "lock": "Lock 45", "slot": 3, "status": "failed", "message": "lock asleep"},
+    ]
+    assert "4821" not in str(resp)
+
+
+async def test_clear_code_returns_the_lock_sync_too(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_clear_user_code", AsyncMock(return_value=[{"nodeId": 44, "slot": 3, "status": "synced"}])):
+        resp = await _send(await hass_ws_client(hass), "user/clear_code", user_id="u1")
+    assert resp["result"]["lock_sync"][0]["status"] == "synced"
+
+
+async def test_lock_mode_settings_command_maps_wire_names_and_merges_actions(hass, hass_ws_client, entry) -> None:
+    put = AsyncMock(return_value={"armOnLockWithCode": True})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_put_lock_mode_settings=put, data=None)
+    resp = await _send(
+        await hass_ws_client(hass), "lock/mode_settings", node_id=44, arm_on_lock_with_code=True, actions={"armed_away": "lock", "disarmed": None}
+    )
+    assert resp["result"] == {"armOnLockWithCode": True}
+    put.assert_awaited_once_with(44, armOnLockWithCode=True, actions={"armed_away": "lock", "disarmed": None})
+
+
+@pytest.mark.parametrize("payload", [{}, {"actions": {}}, {"actions": {"armed_night": "lock"}}, {"actions": {"armed_away": "open"}}])
+async def test_lock_mode_settings_command_rejects_an_empty_or_bad_change(hass, hass_ws_client, entry, payload) -> None:
+    put = AsyncMock()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_put_lock_mode_settings=put, data=None)
+    resp = await _send(await hass_ws_client(hass), "lock/mode_settings", node_id=44, **payload)
+    assert not resp["success"]
+    put.assert_not_awaited()

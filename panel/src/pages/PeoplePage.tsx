@@ -4,7 +4,7 @@ import { Actions, Button, CodeInput, EmptyState, ErrorBanner, Field, Pill, Secti
 import { useApi } from "../context";
 import { useOverview } from "../overview";
 import { clearUserCode, removeUser, setDuressCode } from "../patches";
-import type { AlarmUser, HaPerson, Role } from "../types";
+import type { AlarmUser, HaPerson, LockSyncResult, Role } from "../types";
 import { useConfirm } from "../ui/Confirm";
 import { Gone } from "../ui/Gone";
 import { GuestSchedules } from "./GuestSchedules";
@@ -77,11 +77,16 @@ function PersonForm({ person, user }: { person: HaPerson; user?: AlarmUser }) {
   const [duress, setDuress] = useState("");
   const [confirmDuress, setConfirmDuress] = useState("");
   const [role, setRole] = useState<Role>("member");
+  const [syncNote, setSyncNote] = useState<{ failed: string[]; synced: number } | null>(null);
+  const { locks } = useOverview();
   // Entered twice, like Ring: the code is only valid once the confirmation matches.
   const valid = USER_CODE_RE.test(code) && confirmCode === code;
   const duressValid = USER_CODE_RE.test(duress) && confirmDuress === duress;
-  const saveCode = async (fn: () => Promise<unknown>, done: string) => {
-    if (await run(fn, { done })) {
+  const saveCode = async (fn: () => Promise<{ lock_sync?: LockSyncResult[] } | undefined>, done: string) => {
+    let result: { lock_sync?: LockSyncResult[] } | undefined;
+    if (await run(async () => { result = await fn(); }, { done })) {
+      const sync = result?.lock_sync ?? [];
+      setSyncNote(sync.length ? { failed: sync.filter((x) => x.status === "failed").map((x) => x.lock), synced: sync.filter((x) => x.status === "synced").length } : null);
       // the codes never linger in the UI
       setCode("");
       setConfirmCode("");
@@ -130,6 +135,13 @@ function PersonForm({ person, user }: { person: HaPerson; user?: AlarmUser }) {
         <Pill tone={user.hasCode ? "ok" : "neutral"}>{codeLabel(user)}</Pill>
       </div>
       <ErrorBanner message={error} />
+      {user.lockSlots && user.lockSlots.length > 0 && (
+        <p className="px-1 text-[15px] text-zinc-500 dark:text-zinc-400">
+          On locks: {user.lockSlots.map((l) => `${locks.find((x) => x.nodeId === l.nodeId)?.label ?? `Lock ${l.nodeId}`} (slot ${l.slot}${l.status === "failed" ? ", not synced" : ""})`).join(", ")}
+        </p>
+      )}
+      {syncNote && syncNote.failed.length > 0 && <ErrorBanner message={`Saved, but it did not reach: ${syncNote.failed.join(", ")}. Wake the lock with a keypad touch and set the code again.`} />}
+      {syncNote && syncNote.failed.length === 0 && <p className="px-1 text-[15px] text-zinc-500 dark:text-zinc-400">Sent to {syncNote.synced} lock{syncNote.synced === 1 ? "" : "s"}.</p>}
       {expiry(user) && <p className="px-1 text-[15px] text-zinc-500 dark:text-zinc-400">{expiry(user)}</p>}
       <Field label="Code">
         <CodeInput placeholder={user.hasCode ? "New code" : "4 digits"} value={code} onChange={setCode} />
@@ -138,7 +150,7 @@ function PersonForm({ person, user }: { person: HaPerson; user?: AlarmUser }) {
         <CodeInput placeholder="Enter it again" value={confirmCode} onChange={setConfirmCode} />
       </Field>
       <Actions>
-        <Button variant="primary" disabled={!valid} onClick={() => saveCode(() => api.call("user/set_code", { user_id: user.id, code, confirm_code: confirmCode }), "Code saved")}>
+        <Button variant="primary" disabled={!valid} onClick={() => saveCode(() => api.call<{ lock_sync?: LockSyncResult[] }>("user/set_code", { user_id: user.id, code, confirm_code: confirmCode }), "Code saved")}>
           {user.hasCode ? "Replace code" : "Set code"}
         </Button>
         {user.hasCode && (
@@ -146,7 +158,11 @@ function PersonForm({ person, user }: { person: HaPerson; user?: AlarmUser }) {
             variant="danger"
             onClick={async () => {
               const ok = await confirm({ title: `Clear ${person.name}'s code?`, message: "They will no longer be able to arm or disarm with a code.", confirmLabel: "Clear code" });
-              if (ok) run(() => api.call("user/clear_code", { user_id: user.id }), { patch: clearUserCode(user.id), done: "Code cleared" });
+              if (!ok) return;
+              let sync: LockSyncResult[] = [];
+              if (await run(async () => { sync = (await api.call<{ lock_sync?: LockSyncResult[] }>("user/clear_code", { user_id: user.id }))?.lock_sync ?? []; }, { patch: clearUserCode(user.id), done: "Code cleared" })) {
+                setSyncNote(sync.length ? { failed: sync.filter((x) => x.status === "failed").map((x) => x.lock), synced: sync.filter((x) => x.status === "synced").length } : null);
+              }
             }}
           >
             Clear code

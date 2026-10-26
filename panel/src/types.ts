@@ -113,6 +113,8 @@ export interface AlarmUser {
   hasCode?: boolean;
   /** An administrator's duress code; absent from a service older than 3.4.0. */
   hasDuressCode?: boolean;
+  /** The slot this person's code holds on each enrolled lock (service 3.7.0+). */
+  lockSlots?: { nodeId: number; slot: number; status: "synced" | "failed" }[];
   /** When a guest's or installer's access ends (epoch ms); an installer always has one (48 hours). */
   guestExpiresAt?: number | null;
   haPersonId?: string | null;
@@ -154,6 +156,21 @@ export interface LockCapabilities {
   alarmSettings: boolean;
 }
 /** A Schlage lock enrolled in the alarm system. The service sends enrolled locks only. */
+export type LockAction = "lock" | "unlock" | null;
+/** What a lock does with the alarm (service 3.7.0+). */
+export interface LockModeSettings {
+  armOnLockWithCode: boolean;
+  armOnOneTouch: boolean;
+  disarmOnUnlock: boolean;
+  actions: Record<ScheduleMode, LockAction>;
+}
+export interface LockSyncResult {
+  node_id: number;
+  lock: string;
+  slot: number | null;
+  status: "synced" | "failed";
+  message?: string;
+}
 export interface Lock {
   nodeId: number;
   model?: string | null;
@@ -162,6 +179,7 @@ export interface Lock {
   batteryLevel?: number | null;
   settings?: { pinLength?: number | null } & Record<string, unknown>;
   scheduleSlots?: Partial<Record<ScheduleKind, number>>;
+  modeSettings?: LockModeSettings;
   capabilities: LockCapabilities;
 }
 /** A lock paired to the controller but not enrolled (`GET /locks/available`): offered for enrolment, never a device. */

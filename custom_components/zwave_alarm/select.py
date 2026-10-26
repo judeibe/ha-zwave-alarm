@@ -20,7 +20,8 @@ from .lock_state import (
     lock_supports,
     sensitivity_option,
 )
-from .schlage import ZwaveAlarmLockSettingEntity, async_add_lock_entities
+from .lock_mode_state import ACTION_OPTIONS, MODES, action_option, action_value, mode_settings
+from .schlage import ZwaveAlarmLockModeEntity, ZwaveAlarmLockSettingEntity, async_add_lock_entities
 
 SENSITIVITY_SELECTS = (
     ("alertSensitivity", "alert_sensitivity"),
@@ -44,6 +45,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         return selects
 
     async_add_lock_entities(coordinator, entry, async_add_entities, _selects)
+    async_add_lock_entities(
+        coordinator, entry, async_add_entities,
+        lambda c, e, lock: [ZwaveAlarmLockModeActionSelect(c, e, lock, mode) for mode in MODES] if mode_settings(lock) is not None else [],
+    )
 
 
 class ZwaveAlarmLockAlarmModeSelect(ZwaveAlarmLockSettingEntity, SelectEntity):
@@ -77,3 +82,22 @@ class ZwaveAlarmLockSensitivitySelect(ZwaveAlarmLockSettingEntity, SelectEntity)
 
     async def async_select_option(self, option: str) -> None:
         await self._async_write(SENSITIVITY_VALUES[option])
+
+
+class ZwaveAlarmLockModeActionSelect(ZwaveAlarmLockModeEntity, SelectEntity):
+    """What this lock does when the alarm enters a mode: nothing, lock the bolt, or unlock it."""
+
+    _attr_options = ACTION_OPTIONS
+    _attr_icon = "mdi:lock-clock"
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], mode: str) -> None:
+        super().__init__(coordinator, entry, lock, f"action_{mode}")
+        self._mode = mode
+
+    @property
+    def current_option(self) -> str | None:
+        return action_option(self._mode_settings(), self._mode)
+
+    async def async_select_option(self, option: str) -> None:
+        # A partial `actions` merges per mode on the service, so only this mode changes.
+        await self._async_put(actions={self._mode: action_value(option)})

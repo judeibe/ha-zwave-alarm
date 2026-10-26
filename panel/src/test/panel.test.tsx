@@ -734,3 +734,68 @@ describe("mode schedules", () => {
     expect(call).toHaveBeenCalledWith("mode_schedule/delete", { schedule_id: "m1" });
   });
 });
+
+describe("lock automation and code sync", () => {
+  const settings = { armOnLockWithCode: false, armOnOneTouch: true, disarmOnUnlock: false, actions: { disarmed: null, armed_home: "lock", armed_away: null } } as const;
+  const withSettings = () => {
+    const base = WITH_LOCKS.locks[0]!;
+    return { ...WITH_LOCKS, locks: [{ ...base, modeSettings: { ...settings, actions: { ...settings.actions } } }, ...WITH_LOCKS.locks.slice(1)] };
+  };
+
+  it("shows a lock's alarm automation", async () => {
+    setup(`/locks/${WITH_LOCKS.locks[0]!.nodeId}`, {}, withSettings());
+    expect(await screen.findByText("Alarm automation")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Arm away on one-touch lock" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: "Arm away when locked with a code" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByLabelText("When the alarm arms Home")).toHaveValue("lock");
+    expect(screen.getByLabelText("When the alarm arms Away")).toHaveValue("none");
+  });
+
+  it("sends only the changed switch, and only the changed mode's action", async () => {
+    const { call, user } = setup(`/locks/${WITH_LOCKS.locks[0]!.nodeId}`, {}, withSettings());
+    await user.click(await screen.findByRole("switch", { name: "Disarm when unlocked with a code" }));
+    expect(call).toHaveBeenCalledWith("lock/mode_settings", { node_id: WITH_LOCKS.locks[0]!.nodeId, disarm_on_unlock: true });
+    await user.selectOptions(screen.getByLabelText("When the alarm arms Away"), "unlock");
+    expect(call).toHaveBeenCalledWith("lock/mode_settings", { node_id: WITH_LOCKS.locks[0]!.nodeId, actions: { armed_away: "unlock" } });
+    await user.selectOptions(screen.getByLabelText("When the alarm arms Home"), "none");
+    expect(call).toHaveBeenCalledWith("lock/mode_settings", { node_id: WITH_LOCKS.locks[0]!.nodeId, actions: { armed_home: null } });
+  });
+
+  it("says a refusal and leaves the switch as it was", async () => {
+    const { user } = setup(`/locks/${WITH_LOCKS.locks[0]!.nodeId}`, { "lock/mode_settings": "forbidden" }, withSettings());
+    await user.click(await screen.findByRole("switch", { name: "Arm away when locked with a code" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/denied/);
+    expect(screen.getByRole("switch", { name: "Arm away when locked with a code" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("shows no automation for a lock on an older service", async () => {
+    setup(`/locks/${WITH_LOCKS.locks[0]!.nodeId}`, {}, WITH_LOCKS);
+    await screen.findByText("Z-Wave node");
+    expect(screen.queryByText("Alarm automation")).not.toBeInTheDocument();
+  });
+
+  it("names the locks a saved code did not reach, and never the code", async () => {
+    const sync = { lock_sync: [{ node_id: 5, lock: "Front door lock", slot: 3, status: "synced" }, { node_id: 6, lock: "Back door lock", slot: 3, status: "failed", message: "asleep" }] };
+    const { user } = setup("/people/person.alex", {}, OVERVIEW, { "user/set_code": sync });
+    await user.type(await screen.findByLabelText("Code"), "6543");
+    await user.type(screen.getByLabelText("Confirm code"), "6543");
+    await user.click(screen.getByRole("button", { name: "Replace code" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved, but it did not reach: Back door lock");
+    expect(document.body.textContent).not.toContain("6543");
+  });
+
+  it("says how many locks a code reached when all took it", async () => {
+    const sync = { lock_sync: [{ node_id: 5, lock: "Front", slot: 3, status: "synced" }] };
+    const { user } = setup("/people/person.alex", {}, OVERVIEW, { "user/set_code": sync });
+    await user.type(await screen.findByLabelText("Code"), "6543");
+    await user.type(screen.getByLabelText("Confirm code"), "6543");
+    await user.click(screen.getByRole("button", { name: "Replace code" }));
+    expect(await screen.findByText("Sent to 1 lock.")).toBeInTheDocument();
+  });
+
+  it("shows which slot a person holds on each lock", async () => {
+    const withSlots = { ...WITH_LOCKS, users: [{ ...WITH_LOCKS.users[0]!, lockSlots: [{ nodeId: WITH_LOCKS.locks[0]!.nodeId, slot: 3, status: "failed" as const }] }, ...WITH_LOCKS.users.slice(1)] };
+    setup("/people/person.alex", {}, withSlots);
+    expect(await screen.findByText(/slot 3, not synced/)).toBeInTheDocument();
+  });
+});

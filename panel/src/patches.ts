@@ -1,4 +1,4 @@
-import type { ArmedModeKey, ModeDelays, ModeSchedule, Overview, Sensor, Zone } from "./types";
+import type { ArmedModeKey, LockModeSettings, ModeDelays, ModeSchedule, Overview, Sensor, Zone } from "./types";
 import type { Patch } from "./overview";
 
 const mapZones = (o: Overview, fn: (z: Zone) => Zone | null): Overview => ({ ...o, zones: o.zones.flatMap((z) => fn(z) ?? []) });
@@ -47,4 +47,11 @@ export const setDuressCode = (userId: string, hasDuressCode: boolean): Patch => 
 export const updateModeSchedule = (id: string, changes: Partial<ModeSchedule>): Patch => (o) => ({
   ...o,
   mode_schedules: o.mode_schedules?.map((s) => (s.id === id ? { ...s, ...changes } : s)),
+});
+
+export const updateLockModeSettings = (nodeId: number, changes: Partial<Omit<LockModeSettings, "actions">> & { actions?: Partial<LockModeSettings["actions"]> }): Patch => (o) => ({
+  ...o,
+  locks: o.locks.map((l) =>
+    l.nodeId === nodeId && l.modeSettings ? { ...l, modeSettings: { ...l.modeSettings, ...changes, actions: { ...l.modeSettings.actions, ...changes.actions } } } : l,
+  ),
 });

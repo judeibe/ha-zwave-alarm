@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo, Entity
@@ -20,6 +21,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .lock_mode_state import mode_settings
 from .lock_state import lock_settings
 from .nodes import async_add_node_entities
 
@@ -124,3 +126,27 @@ class ZwaveAlarmLockSettingEntity(ZwaveAlarmLockEntity):
 
     async def _async_write(self, value: Any) -> None:
         await self.coordinator.async_update_lock_settings(self._node_id, **{self._setting_key: value})
+
+
+class ZwaveAlarmLockModeEntity(ZwaveAlarmLockEntity):
+    """A lock's alarm automation (`modeSettings`), written back with `PUT .../mode-settings`.
+
+    Changing it needs an administrator or installer on the service; a refusal raises a Home Assistant error and the
+    entity keeps its value.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], key: str) -> None:
+        super().__init__(coordinator, entry, lock, key)
+        self._attr_translation_key = key
+
+    def _mode_settings(self) -> dict[str, Any] | None:
+        return mode_settings(self._lock())
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._mode_settings() is not None
+
+    async def _async_put(self, **fields: Any) -> None:
+        await self.coordinator.async_put_lock_mode_settings(self._node_id, **fields)

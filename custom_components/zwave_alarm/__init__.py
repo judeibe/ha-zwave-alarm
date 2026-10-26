@@ -42,6 +42,7 @@ from .guest_schedule_state import (
     schedule_fields,
 )
 from .keypad import keypad_device_identifier
+from .lock_mode_state import sync_summary
 from .lock_state import (
     CLIENT_SCHEDULE_KINDS,
     SCHEDULE_KINDS,
@@ -306,12 +307,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             if key in call.data and not _FOUR_DIGITS.match(call.data[key]):
                 raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_not_four_digits")
 
-    async def _set_user_code(call: ServiceCall) -> None:
-        _check_codes(call)
-        await _only_coordinator().async_set_user_code(call.data["user_id"], call.data[ATTR_CODE], call.data.get(ATTR_CONFIRM_CODE))
+    def _sync_response(coordinator: ZwaveAlarmCoordinator, sync: list[dict[str, Any]]) -> ServiceResponse:
+        # Which locks took the change and which did not; the service's message for a failure never contains a code.
+        return {"lock_sync": sync_summary(sync, coordinator.lock_names())}
 
-    async def _clear_user_code(call: ServiceCall) -> None:
-        await _only_coordinator().async_clear_user_code(call.data["user_id"])
+    async def _set_user_code(call: ServiceCall) -> ServiceResponse:
+        _check_codes(call)
+        coordinator = _only_coordinator()
+        sync = await coordinator.async_set_user_code(call.data["user_id"], call.data[ATTR_CODE], call.data.get(ATTR_CONFIRM_CODE))
+        return _sync_response(coordinator, sync)
+
+    async def _clear_user_code(call: ServiceCall) -> ServiceResponse:
+        coordinator = _only_coordinator()
+        return _sync_response(coordinator, await coordinator.async_clear_user_code(call.data["user_id"]))
 
     async def _set_duress_code(call: ServiceCall) -> None:
         _check_codes(call)
@@ -425,8 +433,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     async_register_admin_service(hass, DOMAIN, SERVICE_REMOVE_GUEST_SCHEDULE, _remove_guest_schedule, GUEST_SCHEDULE_ID_SCHEMA)
     # Codes and users are administrator-only, like the panel's websocket commands.
-    async_register_admin_service(hass, DOMAIN, SERVICE_SET_USER_CODE, _set_user_code, SET_USER_CODE_SCHEMA)
-    async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_USER_CODE, _clear_user_code, USER_ID_SCHEMA)
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_SET_USER_CODE, _set_user_code, SET_USER_CODE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_CLEAR_USER_CODE, _clear_user_code, USER_ID_SCHEMA, supports_response=SupportsResponse.OPTIONAL
+    )
     async_register_admin_service(hass, DOMAIN, SERVICE_SET_DURESS_CODE, _set_duress_code, SET_USER_CODE_SCHEMA)
     async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_DURESS_CODE, _clear_duress_code, USER_ID_SCHEMA)
     async_register_admin_service(

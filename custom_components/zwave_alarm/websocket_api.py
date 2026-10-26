@@ -24,6 +24,7 @@ import zwave_alarm_client as api
 from .const import CONF_SSL, DOMAIN
 from .fault_state import faulted_sensors
 from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_mode_schedule, check_schedule, normalize_time, schedule_fields
+from .lock_mode_state import MODES, sync_summary
 from .panel_state import map_panel_mode
 
 _LOGGER = logging.getLogger(__name__)
@@ -526,16 +527,23 @@ async def ws_user_delete(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) 
     await call(api.async_delete_user, msg["user_id"])
 
 
+def _lock_sync_result(hass: HomeAssistant, call: _Call, sync: list[dict[str, Any]]) -> dict[str, Any]:
+    """Each lock's result of pushing or clearing a code on it; never the code. Empty before service 3.7.0."""
+    coordinator = hass.data.get(DOMAIN, {}).get(call.entry.entry_id)
+    names = coordinator.lock_names() if coordinator is not None and hasattr(coordinator, "lock_names") else {}
+    return {"lock_sync": sync_summary(sync, names)}
+
+
 @_command({vol.Required("type"): "zwave_alarm/user/set_code", vol.Required("user_id"): str,
            vol.Required("code"): CODE_SCHEMA, vol.Optional("confirm_code"): CODE_SCHEMA})
-async def ws_user_set_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
+async def ws_user_set_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> dict[str, Any]:
     _check_user_codes(msg)
-    await call(api.async_set_user_code, msg["user_id"], msg["code"], msg.get("confirm_code"))
+    return _lock_sync_result(hass, call, await call(api.async_set_user_code, msg["user_id"], msg["code"], msg.get("confirm_code")))
 
 
 @_command({vol.Required("type"): "zwave_alarm/user/clear_code", vol.Required("user_id"): str})
-async def ws_user_clear_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> None:
-    await call(api.async_clear_user_code, msg["user_id"])
+async def ws_user_clear_code(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> dict[str, Any]:
+    return _lock_sync_result(hass, call, await call(api.async_clear_user_code, msg["user_id"]))
 
 
 @_command({vol.Required("type"): "zwave_alarm/user/set_duress_code", vol.Required("user_id"): str,
@@ -680,6 +688,26 @@ async def ws_mode_schedule_delete(hass: HomeAssistant, call: _Call, msg: dict[st
     await hass.data[DOMAIN][call.entry.entry_id].async_delete_mode_schedule(msg["schedule_id"])
 
 
+# --- Lock automation ----------------------------------------------------------
+
+_ACTION = vol.Any("lock", "unlock", None)
+
+
+@_command({vol.Required("type"): "zwave_alarm/lock/mode_settings", vol.Required("node_id"): int,
+           vol.Optional("arm_on_lock_with_code"): bool, vol.Optional("arm_on_one_touch"): bool,
+           vol.Optional("disarm_on_unlock"): bool,
+           vol.Optional("actions"): vol.All(vol.Schema({vol.Optional(m): _ACTION for m in MODES}), vol.Length(min=1))})
+async def ws_lock_mode_settings(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
+    """Change what a lock does with the alarm (administrator or installer on the service); only what is passed changes."""
+    names = {"arm_on_lock_with_code": "armOnLockWithCode", "arm_on_one_touch": "armOnOneTouch", "disarm_on_unlock": "disarmOnUnlock"}
+    fields: dict[str, Any] = {wire: msg[key] for key, wire in names.items() if key in msg}
+    if "actions" in msg:
+        fields["actions"] = msg["actions"]
+    if not fields:
+        raise api.BadRequest("Change at least one setting.")
+    return await hass.data[DOMAIN][call.entry.entry_id].async_put_lock_mode_settings(msg["node_id"], **fields)
+
+
 # --- Keypads ----------------------------------------------------------------
 
 
@@ -812,7 +840,7 @@ COMMANDS = (
     ws_events, ws_mode_schedule_list, ws_mode_schedule_create, ws_mode_schedule_update, ws_mode_schedule_delete,
     ws_guest_schedule_list, ws_guest_schedule_create, ws_guest_schedule_update, ws_guest_schedule_delete,
     ws_user_create, ws_user_update, ws_user_delete, ws_user_set_code, ws_user_clear_code,
-    ws_keypad_settings_update,
+    ws_keypad_settings_update, ws_lock_mode_settings,
     ws_lock_enroll, ws_lock_unenroll, ws_lock_refresh, ws_lock_settings, ws_lock_users,
     ws_lock_user_set_code, ws_lock_user_clear_code,
     ws_lock_schedules, ws_lock_schedule_set, ws_lock_schedule_clear, ws_lock_schedule_enabled,
