@@ -105,6 +105,15 @@
       },
       "disarm_on_unlock": {
         "name": "Disarm on unlock"
+      },
+      "chirps_disarmed": {
+        "name": "Chirps when disarmed"
+      },
+      "chirps_home": {
+        "name": "Chirps when armed home"
+      },
+      "chirps_away": {
+        "name": "Chirps when armed away"
       }
     },
     "select": {
@@ -170,6 +179,16 @@
           "lock": "Lock",
           "unlock": "Unlock"
         }
+      },
+      "chirp_tone": {
+        "state": {
+          "none": "None",
+          "double_beep": "Double beep",
+          "guitar": "Guitar",
+          "wind_chimes": "Wind chimes",
+          "bing_bong": "Bing bong",
+          "doorbell": "Doorbell"
+        }
       }
     },
     "number": {
@@ -190,6 +209,9 @@
       },
       "siren_duration": {
         "name": "Duration"
+      },
+      "keypad_volume": {
+        "name": "Keypad volume"
       }
     },
     "sensor": {
@@ -710,6 +732,44 @@
           "description": "The id of the schedule (from list_mode_schedules)."
         }
       }
+    },
+    "set_chirps": {
+      "name": "Set chirps",
+      "description": "Turns the chirps sensors play on the base station and keypads on or off in a mode. Administrators only.",
+      "fields": {
+        "mode": {
+          "name": "Mode",
+          "description": "The mode to change."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether sensors chirp in that mode."
+        }
+      }
+    },
+    "set_sensor_chirp_tone": {
+      "name": "Set sensor chirp tone",
+      "description": "Chooses the tone the base station and keypads play when an intrusion sensor trips; none is silent. Administrators only.",
+      "fields": {
+        "sensor_id": {
+          "name": "Sensor id",
+          "description": "The id of an intrusion sensor, as shown in the panel."
+        },
+        "tone": {
+          "name": "Tone",
+          "description": "The tone to play."
+        }
+      }
+    },
+    "set_keypad_volume": {
+      "name": "Set keypad volume",
+      "description": "Sets the volume of the keypad's chirps, countdown tones and announcements, 0 to 99. The siren always sounds at maximum. Administrators only.",
+      "fields": {
+        "volume": {
+          "name": "Volume",
+          "description": "0 to 99."
+        }
+      }
     }
   },
   "selector": {
@@ -793,6 +853,16 @@
         "disarmed": "Disarmed",
         "armed_home": "Armed home",
         "armed_away": "Armed away"
+      }
+    },
+    "chirp_tone": {
+      "options": {
+        "none": "None",
+        "double_beep": "Double beep",
+        "guitar": "Guitar",
+        "wind_chimes": "Wind chimes",
+        "bing_bong": "Bing bong",
+        "doorbell": "Doorbell"
       }
     }
   },

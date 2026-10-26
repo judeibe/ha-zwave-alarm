@@ -167,6 +167,11 @@ def apply_event(state: StreamState, event: dict[str, Any]) -> StreamState:
             state, event["sensorId"], {"currentState": event["currentState"], "category": event["category"]}
         )
 
+    if event_type == "sensor.updated":
+        # A sensor as the service returned it after a change made here (e.g. its chirp tone).
+        sensor = event["sensor"]
+        return _with_sensor_update(state, sensor["id"], sensor)
+
     if event_type == "sensor.fault":
         return _with_sensor_update(
             state,

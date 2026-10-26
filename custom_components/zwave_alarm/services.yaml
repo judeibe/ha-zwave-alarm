@@ -622,3 +622,48 @@ remove_mode_schedule:
       required: true
       selector:
         text:
+set_chirps:
+  fields:
+    mode:
+      required: true
+      example: armed_home
+      selector:
+        select:
+          options:
+            - disarmed
+            - armed_home
+            - armed_away
+          translation_key: schedule_mode
+    enabled:
+      required: true
+      selector:
+        boolean:
+set_sensor_chirp_tone:
+  fields:
+    sensor_id:
+      required: true
+      selector:
+        text:
+    tone:
+      required: true
+      example: doorbell
+      selector:
+        select:
+          options:
+            - none
+            - double_beep
+            - guitar
+            - wind_chimes
+            - bing_bong
+            - doorbell
+          translation_key: chirp_tone
+set_keypad_volume:
+  fields:
+    volume:
+      required: true
+      example: 60
+      selector:
+        number:
+          min: 0
+          max: 99
+          mode: slider

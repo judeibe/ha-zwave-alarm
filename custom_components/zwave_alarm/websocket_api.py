@@ -380,15 +380,21 @@ ARMED_SCHEMA = vol.All(
 )
 DELAY_SCHEMA = vol.All(int, vol.Range(min=0, max=180))
 _MODE_DELAYS_SCHEMA = vol.All(
-    vol.Schema({vol.Optional("entryDelaySec"): DELAY_SCHEMA, vol.Optional("exitDelaySec"): DELAY_SCHEMA}),
+    vol.Schema(
+        {vol.Optional("entryDelaySec"): DELAY_SCHEMA, vol.Optional("exitDelaySec"): DELAY_SCHEMA, vol.Optional("chirpsEnabled"): bool}
+    ),
     vol.Length(min=1),
 )
+# Disarmed has no delays, only whether sensors chirp.
+_DISARMED_SCHEMA = vol.All(vol.Schema({vol.Optional("chirpsEnabled"): bool}), vol.Length(min=1))
+CHIRP_TONE_SCHEMA = vol.In(["none", "double_beep", "guitar", "wind_chimes", "bing_bong", "doorbell"])
 
 
 @_command({vol.Required("type"): "zwave_alarm/sensor/assign", vol.Required("zone_id"): str,
            vol.Required("zwave_node_id"): int, vol.Required("name"): vol.All(str, vol.Length(min=1)),
            vol.Required("category"): CATEGORY_SCHEMA, vol.Optional("placement"): PLACEMENT_SCHEMA,
-           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool})
+           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool,
+           vol.Optional("chirp_tone"): CHIRP_TONE_SCHEMA})
 async def ws_sensor_assign(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
     return await call(
         api.async_assign_sensor,
@@ -399,6 +405,7 @@ async def ws_sensor_assign(hass: HomeAssistant, call: _Call, msg: dict[str, Any]
         placement=msg.get("placement"),
         armed=msg.get("armed"),
         alerts_only=msg.get("alerts_only"),
+        chirp_tone=msg.get("chirp_tone"),
     )
 
 
@@ -410,13 +417,16 @@ def _placement_update(msg: dict[str, Any]) -> dict[str, Any]:
         update["armed"] = msg["armed"]
     if "alerts_only" in msg:
         update["alertsOnly"] = msg["alerts_only"]
+    if "chirp_tone" in msg:
+        update["chirpTone"] = msg["chirp_tone"]
     return update
 
 
 @_command({vol.Required("type"): "zwave_alarm/sensor/update", vol.Required("sensor_id"): str,
            vol.Optional("name"): vol.All(str, vol.Length(min=1)), vol.Optional("category"): CATEGORY_SCHEMA,
            vol.Optional("zone_id"): str, vol.Optional("placement"): PLACEMENT_SCHEMA,
-           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool})
+           vol.Optional("armed"): ARMED_SCHEMA, vol.Optional("alerts_only"): bool,
+           vol.Optional("chirp_tone"): CHIRP_TONE_SCHEMA})
 async def ws_sensor_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
     update = {"name": msg["name"]} if "name" in msg else {}
     update.update(_placement_update(msg))
@@ -428,12 +438,13 @@ async def ws_sensor_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]
 
 
 @_command({vol.Required("type"): "zwave_alarm/modes/update", vol.Optional("armed_home"): _MODE_DELAYS_SCHEMA,
-           vol.Optional("armed_away"): _MODE_DELAYS_SCHEMA})
+           vol.Optional("armed_away"): _MODE_DELAYS_SCHEMA, vol.Optional("disarmed"): _DISARMED_SCHEMA})
 async def ws_modes_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
-    """Per-mode entry/exit delay (0-180 s); the new config is also pushed to the entities and the panel."""
-    changes = {mode: msg[mode] for mode in ("armed_home", "armed_away") if mode in msg}
+    """Per-mode entry/exit delay (0-180 s) and chirps; only what is passed changes, and the new config is pushed to the
+    entities and the panel."""
+    changes = {mode: msg[mode] for mode in ("armed_home", "armed_away", "disarmed") if mode in msg}
     if not changes:
-        raise api.BadRequest("Pass armed_home and/or armed_away.")
+        raise api.BadRequest("Pass armed_home, armed_away and/or disarmed.")
     return await hass.data[DOMAIN][call.entry.entry_id].async_update_modes(changes)
 
 
@@ -711,9 +722,18 @@ async def ws_lock_mode_settings(hass: HomeAssistant, call: _Call, msg: dict[str,
 # --- Keypads ----------------------------------------------------------------
 
 
-@_command({vol.Required("type"): "zwave_alarm/keypad_settings/update", vol.Required("require_code_to_arm"): bool})
+@_command({vol.Required("type"): "zwave_alarm/keypad_settings/update", vol.Optional("require_code_to_arm"): bool,
+           vol.Optional("volume"): vol.All(int, vol.Range(min=0, max=99))})
 async def ws_keypad_settings_update(hass: HomeAssistant, call: _Call, msg: dict[str, Any]) -> Any:
-    return await call(api.async_update_keypad_settings, {"requireCodeToArm": msg["require_code_to_arm"]})
+    """Keypad-wide settings; only what is passed changes. `volume` is 0-99 (chirps, countdown tones, announcements)."""
+    update: dict[str, Any] = {}
+    if "require_code_to_arm" in msg:
+        update["requireCodeToArm"] = msg["require_code_to_arm"]
+    if "volume" in msg:
+        update["volume"] = msg["volume"]
+    if not update:
+        raise api.BadRequest("Change at least one keypad setting.")
+    return await call(api.async_update_keypad_settings, update)
 
 
 # --- Locks ------------------------------------------------------------------

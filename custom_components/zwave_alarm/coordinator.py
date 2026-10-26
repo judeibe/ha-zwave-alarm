@@ -113,7 +113,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
         return _remove
 
-    async def _call_client(self, call: Awaitable[T], what: str) -> T:
+    async def _call_client(self, call: Awaitable[T], what: str, who: str = "an administrator or installer") -> T:
         """Await a client call, mapping its errors to Home Assistant ones (`what` names the rejected action)."""
         try:
             return await call
@@ -123,7 +123,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError(f"The Z-Wave Alarm service rejected the {what}: {err}") from err
         except api.Forbidden as err:
             raise HomeAssistantError(
-                f"The Z-Wave Alarm service only lets an administrator or installer make this {what} change."
+                f"The Z-Wave Alarm service only lets {who} make this {what} change."
             ) from err
         except api.ScheduleConflict as err:  # a Conflict subclass: must precede the generic handler
             other = f" ({err.conflicts_with})" if err.conflicts_with else ""
@@ -157,6 +157,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         settings = await self._call_client(
             api.async_update_keypad_settings(self._session, self._host, self._port, None, changes, secure=self._secure),
             "setting",
+            "an administrator",
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "keypad.settings", "settings": settings}))
@@ -322,11 +323,23 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "mode-schedule.removed", "id": schedule_id}))
 
+    async def async_set_chirp_tone(self, sensor_id: str, tone: str) -> dict[str, Any]:
+        """Choose the chirp a sensor plays on the base station and keypads when it trips (`PATCH /sensors/{id}`)."""
+        sensor = await self._call_client(
+            api.async_update_sensor(self._session, self._host, self._port, None, sensor_id, {"chirpTone": tone}, secure=self._secure),
+            "chirp tone",
+            "an administrator",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "sensor.updated", "sensor": sensor}))
+        return sensor
+
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""
         modes = await self._call_client(
             api.async_update_modes(self._session, self._host, self._port, None, changes, secure=self._secure),
-            "delay",
+            "mode setting",
+            "an administrator",
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(replace(current, modes=modes))

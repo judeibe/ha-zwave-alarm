@@ -307,7 +307,7 @@ async def test_sensor_assign_sends_placement_in_one_call(hass, hass_ws_client, e
         )
     assert resp["result"] == {"id": "s9"}
     assert assign.await_args.args[-4:] == ("z1", 7, "Back door", "intrusion")
-    assert assign.await_args.kwargs == {"placement": "SECONDARY_DOOR", "armed": {"away": True}, "alerts_only": None, "secure": False}
+    assert assign.await_args.kwargs == {"placement": "SECONDARY_DOOR", "armed": {"away": True}, "alerts_only": None, "chirp_tone": None, "secure": False}
 
 
 async def test_modes_update_writes_through_the_coordinator(hass, hass_ws_client, entry) -> None:
@@ -808,3 +808,48 @@ async def test_lock_mode_settings_command_rejects_an_empty_or_bad_change(hass, h
     resp = await _send(await hass_ws_client(hass), "lock/mode_settings", node_id=44, **payload)
     assert not resp["success"]
     put.assert_not_awaited()
+
+
+async def test_sensor_update_and_assign_pass_the_chirp_tone(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_update_sensor", AsyncMock(return_value={})) as update:
+        resp = await _send(await hass_ws_client(hass), "sensor/update", sensor_id="s1", chirp_tone="doorbell")
+    assert resp["success"] and update.await_args.args[-2:] == ("s1", {"chirpTone": "doorbell"})
+    with patch(f"{API}.async_assign_sensor", AsyncMock(return_value={"id": "s9"})) as assign:
+        await _send(await hass_ws_client(hass), "sensor/assign", zone_id="z1", zwave_node_id=7, name="Back", category="intrusion", chirp_tone="none")
+    assert assign.await_args.kwargs["chirp_tone"] == "none"
+
+
+async def test_sensor_update_rejects_an_unknown_chirp_tone(hass, hass_ws_client, entry) -> None:
+    resp = await _send(await hass_ws_client(hass), "sensor/update", sensor_id="s1", chirp_tone="siren")
+    assert not resp["success"]
+
+
+async def test_modes_update_takes_chirps_and_the_disarmed_mode(hass, hass_ws_client, entry) -> None:
+    update = AsyncMock(return_value={})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_update_modes=update, data=None)
+    resp = await _send(await hass_ws_client(hass), "modes/update", disarmed={"chirpsEnabled": True}, armed_home={"chirpsEnabled": False})
+    assert resp["success"]
+    update.assert_awaited_once_with({"disarmed": {"chirpsEnabled": True}, "armed_home": {"chirpsEnabled": False}})
+
+
+@pytest.mark.parametrize("payload", [{"disarmed": {"entryDelaySec": 10}}, {"disarmed": {}}, {"armed_home": {"chirpsEnabled": "yes"}}])
+async def test_modes_update_rejects_what_a_mode_does_not_have(hass, hass_ws_client, entry, payload) -> None:
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(async_update_modes=AsyncMock(), data=None)
+    resp = await _send(await hass_ws_client(hass), "modes/update", **payload)
+    assert not resp["success"]
+
+
+async def test_keypad_settings_update_takes_volume_alone_or_with_the_pin_switch(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_update_keypad_settings", AsyncMock(return_value={})) as update:
+        await _send(await hass_ws_client(hass), "keypad_settings/update", volume=40)
+        assert update.await_args.args[-1] == {"volume": 40}
+        await _send(await hass_ws_client(hass), "keypad_settings/update", volume=0, require_code_to_arm=True)
+        assert update.await_args.args[-1] == {"requireCodeToArm": True, "volume": 0}
+
+
+@pytest.mark.parametrize("payload", [{"volume": 100}, {"volume": -1}, {}])
+async def test_keypad_settings_update_rejects_a_bad_volume_or_nothing(hass, hass_ws_client, entry, payload) -> None:
+    with patch(f"{API}.async_update_keypad_settings", AsyncMock()) as update:
+        resp = await _send(await hass_ws_client(hass), "keypad_settings/update", **payload)
+    assert not resp["success"]
+    update.assert_not_awaited()

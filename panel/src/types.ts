@@ -7,9 +7,15 @@ export type Placement = "MAIN_DOOR" | "SECONDARY_DOOR" | "WINDOW" | "ENTRYWAY" |
 export interface ModeDelays {
   entryDelaySec: number;
   exitDelaySec: number;
+  /** Whether sensors chirp in this mode (service 3.8.0+). */
+  chirpsEnabled?: boolean;
 }
 export type ArmedModeKey = "armed_home" | "armed_away";
-export type Modes = Record<ArmedModeKey, ModeDelays>;
+export type Modes = Record<ArmedModeKey, ModeDelays> & {
+  /** Disarmed has no delays, only chirps (service 3.8.0+). */
+  disarmed?: { chirpsEnabled: boolean };
+};
+export type ChirpTone = "none" | "double_beep" | "guitar" | "wind_chimes" | "bing_bong" | "doorbell";
 export type FaultReason = "open" | "offline" | "tampered" | "not_set_up" | "updating";
 /** A sensor an arm was refused for until it is fixed or bypassed. */
 export interface FaultedSensor {
@@ -80,6 +86,8 @@ export interface Sensor {
   batteryLevel?: number | null;
   /** Cover removed or not seated; absent from a service older than 3.3.0. */
   tampered?: boolean;
+  /** The chirp an intrusion sensor plays on the base station and keypads; null for life-safety, absent before 3.8.0. */
+  chirpTone?: ChirpTone | null;
   connectivityStatus?: "online" | "offline";
   /** Null for life-safety sensors; absent on a service older than 3.0.0. */
   placement?: Placement | null;
@@ -136,6 +144,8 @@ export interface Keypad {
 export interface KeypadSettings {
   /** Arming from a keypad needs a valid user PIN; disarming always does. */
   requireCodeToArm: boolean;
+  /** Chirps, countdown tones and announcements, 0-99; absent from a service older than 3.8.0. */
+  volume?: number;
 }
 /** Live alarm state from the integration's coordinator; `state` uses HA's alarm_control_panel strings. */
 export interface PanelSummary {

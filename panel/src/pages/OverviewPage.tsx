@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Button, ErrorBanner, FIELD, Hint, Pill, SectionTitle } from "../components";
+import { Button, ErrorBanner, FIELD, Hint, Pill, SectionTitle, Switch } from "../components";
 import { useConfirm } from "../ui/Confirm";
 import { useApi } from "../context";
-import { setModeDelays } from "../patches";
+import { setModeChirps, setModeDelays } from "../patches";
 import { useAction } from "../useAction";
 import type { ArmedModeKey, FaultedSensor, ModeDelays } from "../types";
 import { useOverview } from "../overview";
@@ -123,6 +123,41 @@ export function ModeDelaysSection() {
         </InsetList>
       ))}
       <Hint>0 to 180 seconds. At 0, door and entryway sensors alarm immediately.</Hint>
+      <ChirpSwitches />
+    </>
+  );
+}
+
+const CHIRP_MODES: { mode: ArmedModeKey | "disarmed"; label: string }[] = [
+  { mode: "disarmed", label: "Chirps when disarmed" },
+  { mode: "armed_home", label: "Chirps when armed home" },
+  { mode: "armed_away", label: "Chirps when armed away" },
+];
+
+/** Whether sensors chirp on the base station and keypads in each mode. Only an administrator can change it. */
+function ChirpSwitches() {
+  const api = useApi();
+  const { modes } = useOverview();
+  const { run, error } = useAction();
+  const shown = CHIRP_MODES.filter(({ mode }) => typeof modes?.[mode]?.chirpsEnabled === "boolean");
+  if (!shown.length) return null;
+  return (
+    <>
+      <SectionTitle>Sensor chirps</SectionTitle>
+      <ErrorBanner message={error} />
+      <InsetList label="Chirps">
+        {shown.map(({ mode, label }) => (
+          <li key={mode} className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+            <span className="min-w-0 flex-1 text-[17px] leading-snug">{label}</span>
+            <Switch
+              checked={modes?.[mode]?.chirpsEnabled === true}
+              aria-label={label}
+              onChange={(next) => run(() => api.call("modes/update", { [mode]: { chirpsEnabled: next } }), { patch: setModeChirps(mode, next) })}
+            />
+          </li>
+        ))}
+      </InsetList>
+      <Hint>When off, sensors stay quiet in that mode. Each sensor's tone is on its own page.</Hint>
     </>
   );
 }
@@ -165,6 +200,10 @@ export function ArmSection() {
           Arm away
         </Button>
       </div>
+      <Hint>
+        With faulted sensors, a keypad asks you to repeat the same arm within 10 seconds to confirm leaving them out. That behaviour is inferred from Ring's
+        documentation and has not been verified on hardware.
+      </Hint>
     </>
   );
 }

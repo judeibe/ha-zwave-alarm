@@ -117,6 +117,13 @@ UPDATE_GUEST_SCHEDULE_SCHEMA = vol.Schema(
 )
 GUEST_SCHEDULE_ID_SCHEMA = vol.Schema({vol.Required("user_id"): cv.string, vol.Required("schedule_id"): cv.string})
 
+SERVICE_SET_CHIRPS = "set_chirps"
+SERVICE_SET_CHIRP_TONE = "set_sensor_chirp_tone"
+SERVICE_SET_KEYPAD_VOLUME = "set_keypad_volume"
+_CHIRP_TONES = ["none", "double_beep", "guitar", "wind_chimes", "bing_bong", "doorbell"]
+SET_CHIRPS_SCHEMA = vol.Schema({vol.Required("mode"): vol.In(["disarmed", "armed_home", "armed_away"]), vol.Required("enabled"): cv.boolean})
+SET_CHIRP_TONE_SCHEMA = vol.Schema({vol.Required("sensor_id"): cv.string, vol.Required("tone"): vol.In(_CHIRP_TONES)})
+SET_KEYPAD_VOLUME_SCHEMA = vol.Schema({vol.Required("volume"): vol.All(vol.Coerce(int), vol.Range(min=0, max=99))})
 SERVICE_GET_HISTORY = "get_history"
 SERVICE_LIST_MODE_SCHEDULES = "list_mode_schedules"
 SERVICE_ADD_MODE_SCHEDULE = "add_mode_schedule"
@@ -404,7 +411,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def _remove_mode_schedule(call: ServiceCall) -> None:
         await _only_coordinator().async_delete_mode_schedule(call.data["schedule_id"])
 
+    async def _set_chirps(call: ServiceCall) -> None:
+        await _only_coordinator().async_update_modes({call.data["mode"]: {"chirpsEnabled": call.data["enabled"]}})
+
+    async def _set_chirp_tone(call: ServiceCall) -> None:
+        await _only_coordinator().async_set_chirp_tone(call.data["sensor_id"], call.data["tone"])
+
+    async def _set_keypad_volume(call: ServiceCall) -> None:
+        await _only_coordinator().async_update_keypad_settings(volume=call.data["volume"])
+
     hass.services.async_register(DOMAIN, SERVICE_KEYPAD_CHIME, _keypad_chime, schema=KEYPAD_CHIME_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_SET_CHIRPS, _set_chirps, SET_CHIRPS_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_SET_CHIRP_TONE, _set_chirp_tone, SET_CHIRP_TONE_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, SERVICE_SET_KEYPAD_VOLUME, _set_keypad_volume, SET_KEYPAD_VOLUME_SCHEMA)
     async_register_admin_service(
         hass, DOMAIN, SERVICE_GET_HISTORY, _get_history, GET_HISTORY_SCHEMA, supports_response=SupportsResponse.ONLY
     )

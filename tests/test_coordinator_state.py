@@ -337,3 +337,11 @@ def test_sensor_fault_carries_tampered_and_keeps_it_when_absent() -> None:
     fault = {"type": "sensor.fault", "sensorId": "s1", "connectivityStatus": "online", "batteryLevel": 90}
     assert apply_event(state, {**fault, "tampered": True}).zones[0]["sensors"][0]["tampered"] is True
     assert apply_event(state, fault).zones[0]["sensors"][0]["tampered"] is False
+
+
+def test_sensor_updated_merges_what_the_service_returned() -> None:
+    state = StreamState(panel=None, zones=[_zone("z1", [_sensor("s1", chirpTone="double_beep")])])
+    new = apply_event(state, {"type": "sensor.updated", "sensor": {"id": "s1", "chirpTone": "doorbell"}})
+    assert new.zones[0]["sensors"][0]["chirpTone"] == "doorbell"
+    assert new.zones[0]["sensors"][0]["batteryLevel"] == 100  # the rest is kept
+    assert apply_event(state, {"type": "sensor.updated", "sensor": {"id": "nope", "chirpTone": "none"}}) == state
