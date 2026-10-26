@@ -12,6 +12,7 @@ import { Gone } from "../ui/Gone";
 import { InsetList, ListRow } from "../ui/List";
 import { Sheet, useRemembered } from "../ui/Sheet";
 import { useAction } from "../useAction";
+import { LockAutomation } from "./LockAutomation";
 
 const LIST = "/locks";
 const lockName = (l: { nodeId: number; label?: string | null }) => l.label || `Lock ${l.nodeId}`;
@@ -100,6 +101,7 @@ function LockDetails({ lock, onRemoved }: { lock: Lock; onRemoved: () => void })
         <ListRow title="Connectivity" trailing={<Pill tone={lock.connectivityStatus === "online" ? "ok" : "neutral"}>{lock.connectivityStatus === "online" ? "Online" : "Offline"}</Pill>} />
         <ListRow title="Z-Wave node" trailing={<span className="text-[15px] text-zinc-400">{lock.nodeId}</span>} />
       </InsetList>
+      {lock.modeSettings && <LockAutomation lock={lock} settings={lock.modeSettings} />}
       {caps.secure === false && <ErrorBanner message="This lock was included without S0/S2, so its codes and schedules cannot be managed. Exclude it and include it again securely." />}
       {caps.secure !== false && (caps.userCodes ? <LockUsers lock={lock} /> : <Hint>This lock does not support user codes.</Hint>)}
       {caps.secure !== false && (SCHEDULE_KINDS.some((k) => caps.schedules[k] !== false) ? <LockSchedules lock={lock} /> : <Hint>This lock does not support access schedules.</Hint>)}

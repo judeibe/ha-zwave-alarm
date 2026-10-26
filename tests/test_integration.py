@@ -91,6 +91,8 @@ class FakeService:
         self.schedule_calls: list[tuple] = []
         self.schedule_status = 200
         self.code_calls: list[tuple] = []
+        self.lock_sync: list[dict] | None = None  # a 3.7.0 service answers a code route with 200 {lockSync}
+        self.mode_settings_status = 200
         self.code_status = 204
         self.code_error = "code_in_use"
         self.sirens: list[dict] | None = None  # the snapshot's `sirens`; None leaves it out like an older service
@@ -167,9 +169,23 @@ class FakeService:
         self._note(request)
         body = await request.json() if request.can_read_body else {}
         self.code_calls.append((request.method, request.match_info["user_id"], request.path.rsplit("/", 1)[-1], body))
+        if self.code_status == 204 and self.lock_sync is not None:
+            return web.json_response({"lockSync": copy.deepcopy(self.lock_sync)})
         if self.code_status == 204:
             return web.Response(status=204)
         return web.json_response({"error": {"code": self.code_error, "message": "nope"}}, status=self.code_status)
+
+    async def put_mode_settings(self, request: web.Request) -> web.Response:
+        self._note(request)
+        node_id, body = int(request.match_info["node_id"]), await request.json()
+        self.lock_calls.append(("mode-settings", node_id, copy.deepcopy(body)))
+        if self.mode_settings_status != 200:
+            return web.json_response({"error": {"code": "forbidden", "message": "no"}}, status=self.mode_settings_status)
+        lock = next(lk for lk in self.locks if lk["nodeId"] == node_id)
+        current = lock["modeSettings"]
+        actions = {**current["actions"], **body.pop("actions", {})}
+        lock["modeSettings"] = {**current, **body, "actions": actions}
+        return web.json_response(lock["modeSettings"])
 
     async def create_user(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -342,6 +358,7 @@ async def service(socket_enabled):
     app.router.add_put("/api/v1/sirens/{node_id}", fake.put_siren)
     app.router.add_delete("/api/v1/sirens/{node_id}", fake.delete_siren)
     app.router.add_post("/api/v1/users", fake.create_user)
+    app.router.add_put("/api/v1/locks/{node_id}/mode-settings", fake.put_mode_settings)
     app.router.add_route("*", "/api/v1/users/{user_id}/code", fake.user_code)
     app.router.add_route("*", "/api/v1/users/{user_id}/duress-code", fake.user_code)
     app.router.add_route("*", "/api/v1/users/{user_id}/schedules", fake.user_schedules)
@@ -1991,3 +2008,114 @@ async def test_history_and_schedule_actions_are_administrator_only(hass: HomeAss
             await hass.services.async_call(DOMAIN, name, data, blocking=True, return_response=name != "remove_mode_schedule",
                                            context=Context(user_id=hass_read_only_user.id))
     assert service.mode_schedule_calls == [] and service.event_queries == []
+
+
+MODE_SETTINGS = {"armOnLockWithCode": False, "armOnOneTouch": True, "disarmOnUnlock": False,
+                 "actions": {"disarmed": None, "armed_home": "lock", "armed_away": None}}
+
+
+def _lock_with_mode_settings(service: FakeService) -> FakeService:
+    service.locks = [{**copy.deepcopy(BE469), "modeSettings": copy.deepcopy(MODE_SETTINGS)}]
+    return service
+
+
+async def test_lock_mode_entities_follow_the_snapshot(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _lock_with_mode_settings(service)
+    await setup()
+    await _settle(hass, service)
+
+    await _entity(hass, "switch.front_door_lock_arm_on_lock_with_code")
+    states = {s.entity_id: s.state for s in hass.states.async_all() if "front_door_lock" in s.entity_id}
+    assert states["switch.front_door_lock_arm_on_lock_with_code"] == "off"
+    assert states["switch.front_door_lock_arm_on_one_touch_lock"] == "on"
+    assert states["switch.front_door_lock_disarm_on_unlock"] == "off"
+    assert states["select.front_door_lock_when_disarmed"] == "none"
+    assert states["select.front_door_lock_when_home"] == "lock"
+    assert states["select.front_door_lock_when_away"] == "none"
+
+
+async def test_a_lock_without_mode_settings_gets_none_of_them(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    assert not [s for s in hass.states.async_all() if "arm_on_lock" in s.entity_id or "when_away" in s.entity_id]
+
+
+async def test_lock_mode_switch_writes_one_field(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _lock_with_mode_settings(service)
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "switch.front_door_lock_arm_on_lock_with_code")
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.front_door_lock_arm_on_lock_with_code"}, blocking=True)
+
+    assert service.lock_calls == [("mode-settings", 21, {"armOnLockWithCode": True})]
+    assert hass.states.get("switch.front_door_lock_arm_on_lock_with_code").state == "on"
+
+
+async def test_lock_mode_select_changes_only_its_mode_and_none_clears_it(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _lock_with_mode_settings(service)
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "select.front_door_lock_when_away")
+
+    await hass.services.async_call("select", "select_option", {"entity_id": "select.front_door_lock_when_away", "option": "unlock"}, blocking=True)
+    await hass.services.async_call("select", "select_option", {"entity_id": "select.front_door_lock_when_home", "option": "none"}, blocking=True)
+
+    assert service.lock_calls == [("mode-settings", 21, {"actions": {"armed_away": "unlock"}}), ("mode-settings", 21, {"actions": {"armed_home": None}})]
+    assert hass.states.get("select.front_door_lock_when_away").state == "unlock"
+    assert hass.states.get("select.front_door_lock_when_home").state == "none"
+
+
+async def test_a_member_cannot_change_a_lock_automation_and_the_entity_keeps_its_value(hass: HomeAssistant, service: FakeService, setup) -> None:
+    _lock_with_mode_settings(service)
+    service.mode_settings_status = 403
+    await setup()
+    await _settle(hass, service)
+    await _entity(hass, "switch.front_door_lock_arm_on_lock_with_code")
+
+    with pytest.raises(HomeAssistantError, match="administrator or installer"):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.front_door_lock_arm_on_lock_with_code"}, blocking=True)
+    assert hass.states.get("switch.front_door_lock_arm_on_lock_with_code").state == "off"
+
+
+async def test_lock_event_fires_on_the_locks_activity_entity_with_who_and_how(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    await setup()
+    await _settle(hass, service)
+    activity = "event.front_door_lock_activity"
+    await _entity(hass, activity)
+
+    await _push(hass, service, {"type": "lock.event", "nodeId": 21, "kind": "armed", "userId": "u1", "method": "keypad"})
+    state = hass.states.get(activity)
+    assert (state.attributes["event_type"], state.attributes["user_id"], state.attributes["method"]) == ("armed", "u1", "keypad")
+
+    before = state.state
+    await _push(hass, service, {"type": "lock.event", "nodeId": 22, "kind": "locked", "userId": None, "method": "manual"})  # another lock
+    await _push(hass, service, {"type": "lock.event", "nodeId": 21, "kind": "exploded", "userId": None, "method": "manual"})  # unknown kind
+    assert hass.states.get(activity).state == before
+
+
+async def test_set_user_code_returns_each_locks_result_and_names_the_failed_one(hass: HomeAssistant, service: FakeService, setup, locks, caplog) -> None:
+    service.lock_sync = [{"nodeId": 21, "slot": 3, "status": "synced"}, {"nodeId": 22, "slot": 3, "status": "failed", "message": "lock asleep"}]
+    await setup()
+    await _settle(hass, service)
+
+    result = await hass.services.async_call(
+        DOMAIN, "set_user_code", {"user_id": "u1", "code": "4821", "confirm_code": "4821"}, blocking=True, return_response=True
+    )
+
+    assert [(x["lock"], x["status"]) for x in result["lock_sync"]] == [("Front Door Lock", "synced"), ("Back Door Lock", "failed")]
+    assert result["lock_sync"][1]["message"] == "lock asleep"
+    assert "4821" not in str(result) and "4821" not in caplog.text
+
+
+async def test_clear_user_code_returns_the_lock_results_and_an_older_service_returns_none(hass: HomeAssistant, service: FakeService, setup, locks) -> None:
+    await setup()
+    await _settle(hass, service)
+
+    old = await hass.services.async_call(DOMAIN, "clear_user_code", {"user_id": "u1"}, blocking=True, return_response=True)
+    assert old == {"lock_sync": []}  # a 204 from a service before 3.7.0
+
+    service.lock_sync = [{"nodeId": 21, "slot": 3, "status": "synced"}]
+    new = await hass.services.async_call(DOMAIN, "clear_user_code", {"user_id": "u1"}, blocking=True, return_response=True)
+    assert new["lock_sync"][0]["status"] == "synced"

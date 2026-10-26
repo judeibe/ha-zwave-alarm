@@ -21,6 +21,8 @@ from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
 from .keypad_state import KEYPAD_EVENT_TYPES
+from .lock_mode_state import LOCK_EVENT_KINDS
+from .schlage import ZwaveAlarmLockEntity, async_add_lock_entities
 
 # data-model.md SecurityEvent.type
 SECURITY_EVENT_TYPES = [
@@ -68,6 +70,7 @@ async def async_setup_entry(
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadInputEvent(c, e, keypad)]
     )
+    async_add_lock_entities(coordinator, entry, async_add_entities, lambda c, e, lock: [ZwaveAlarmLockActivityEvent(c, e, lock)])
 
 
 class ZwaveAlarmSecurityEvents(EventEntity):
@@ -124,4 +127,24 @@ class ZwaveAlarmKeypadInputEvent(ZwaveAlarmKeypadEntity, EventEntity):
     def _handle_keypad_event(self, node_id: int, event_type: str, attributes: dict[str, Any]) -> None:
         if node_id == self._node_id:
             self._trigger_event(event_type, attributes)
+            self.async_write_ha_state()
+
+
+class ZwaveAlarmLockActivityEvent(ZwaveAlarmLockEntity, EventEntity):
+    """Fires when the lock is locked, unlocked, jammed, or arms or disarms the alarm, with who and how (`lock.event`)."""
+
+    _attr_translation_key = "lock_activity"
+    _attr_event_types = LOCK_EVENT_KINDS
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> None:
+        super().__init__(coordinator, entry, lock, "activity")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.coordinator.async_add_lock_event_listener(self._handle_lock_event))
+
+    @callback
+    def _handle_lock_event(self, node_id: int, kind: str, attributes: dict[str, Any]) -> None:
+        if node_id == self._node_id:
+            self._trigger_event(kind, attributes)
             self.async_write_ha_state()

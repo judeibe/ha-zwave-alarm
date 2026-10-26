@@ -51,6 +51,20 @@
             }
           }
         }
+      },
+      "lock_activity": {
+        "name": "Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "locked": "Locked",
+              "unlocked": "Unlocked",
+              "armed": "Armed the alarm",
+              "disarmed": "Disarmed the alarm",
+              "jammed": "Jammed"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -82,6 +96,15 @@
       },
       "keypad_require_code_to_arm": {
         "name": "Keypad requires PIN to arm"
+      },
+      "arm_on_lock_with_code": {
+        "name": "Arm on lock with code"
+      },
+      "arm_on_one_touch": {
+        "name": "Arm on one-touch lock"
+      },
+      "disarm_on_unlock": {
+        "name": "Disarm on unlock"
       }
     },
     "select": {
@@ -122,6 +145,30 @@
           "medium": "Medium",
           "low": "Low",
           "least_sensitive": "Least sensitive"
+        }
+      },
+      "action_disarmed": {
+        "name": "When disarmed",
+        "state": {
+          "none": "Do nothing",
+          "lock": "Lock",
+          "unlock": "Unlock"
+        }
+      },
+      "action_armed_home": {
+        "name": "When home",
+        "state": {
+          "none": "Do nothing",
+          "lock": "Lock",
+          "unlock": "Unlock"
+        }
+      },
+      "action_armed_away": {
+        "name": "When away",
+        "state": {
+          "none": "Do nothing",
+          "lock": "Lock",
+          "unlock": "Unlock"
         }
       }
     },
@@ -384,7 +431,7 @@
     },
     "set_user_code": {
       "name": "Set user code",
-      "description": "Sets or replaces a person's code. Administrators only. The code is sent to the service and never stored or logged by Home Assistant, but an automation or script that sends it keeps it in its own configuration and traces.",
+      "description": "Sets or replaces a person's code. Administrators only. The code is sent to the service and never stored or logged by Home Assistant, but an automation or script that sends it keeps it in its own configuration and traces. Returns lock_sync: for each enrolled lock whether the code reached it (synced) or not (failed, with the reason).",
       "fields": {
         "user_id": {
           "name": "User id",
@@ -402,7 +449,7 @@
     },
     "clear_user_code": {
       "name": "Clear user code",
-      "description": "Removes a person's code, so they can no longer arm or disarm with one. Administrators only.",
+      "description": "Removes a person's code, so they can no longer arm or disarm with one. Administrators only. Also clears the code from every enrolled lock; returns lock_sync with each lock's result.",
       "fields": {
         "user_id": {
           "name": "User id",

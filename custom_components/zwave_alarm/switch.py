@@ -16,7 +16,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .lock_state import lock_supports
-from .schlage import ZwaveAlarmLockSettingEntity, async_add_lock_entities
+from .lock_mode_state import MODE_SWITCHES, mode_settings
+from .schlage import ZwaveAlarmLockModeEntity, ZwaveAlarmLockSettingEntity, async_add_lock_entities
 
 # (setting key, translation key, icon); a switch is created only for settings the lock lists as supported.
 SWITCHES = (
@@ -35,6 +36,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         return [ZwaveAlarmLockSwitch(coordinator, entry, lock, *d) for d in SWITCHES if lock_supports(lock, d[0])]
 
     async_add_lock_entities(coordinator, entry, async_add_entities, _switches)
+    async_add_lock_entities(
+        coordinator, entry, async_add_entities,
+        lambda c, e, lock: [ZwaveAlarmLockModeSwitch(c, e, lock, *d) for d in MODE_SWITCHES] if mode_settings(lock) is not None else [],
+    )
     _async_add_keypad_pin_switch(coordinator, entry, async_add_entities)
     _async_add_mode_schedule_switches(coordinator, entry, async_add_entities)
 
@@ -184,3 +189,26 @@ class ZwaveAlarmModeScheduleSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], Swi
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_update_mode_schedule(self._schedule_id, enabled=False)
+
+
+class ZwaveAlarmLockModeSwitch(ZwaveAlarmLockModeEntity, SwitchEntity):
+    """Arm AWAY when the lock is locked with a code or its one-touch button, or disarm when it is unlocked with a code."""
+
+    def __init__(
+        self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any], field: str, key: str, icon: str
+    ) -> None:
+        super().__init__(coordinator, entry, lock, key)
+        self._field = field
+        self._attr_icon = icon
+
+    @property
+    def is_on(self) -> bool | None:
+        settings = self._mode_settings()
+        value = settings.get(self._field) if settings else None
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_put(**{self._field: True})
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_put(**{self._field: False})
