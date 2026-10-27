@@ -853,3 +853,18 @@ async def test_keypad_settings_update_rejects_a_bad_volume_or_nothing(hass, hass
         resp = await _send(await hass_ws_client(hass), "keypad_settings/update", **payload)
     assert not resp["success"]
     update.assert_not_awaited()
+
+
+@pytest.mark.parametrize("exc", [api.BadRequest("4821 is not allowed"), api.Conflict("code 4821 taken"), api.ZwaveAlarmError("oops 4821")])
+async def test_an_error_message_that_repeats_a_code_is_masked_on_the_websocket(hass, hass_ws_client, entry, exc) -> None:
+    with patch(f"{API}.async_set_user_code", AsyncMock(side_effect=exc)):
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="4821", confirm_code="4821")
+    assert not resp["success"]
+    assert "4821" not in str(resp)
+
+
+async def test_a_429_on_the_websocket_says_how_long_to_wait(hass, hass_ws_client, entry) -> None:
+    with patch(f"{API}.async_set_user_code", AsyncMock(side_effect=api.TooManyRequests("slow", 30))):
+        resp = await _send(await hass_ws_client(hass), "user/set_code", user_id="u1", code="4821")
+    assert resp["error"]["code"] == "too_many_requests"
+    assert resp["error"]["message"] == "Too many attempts. Try again in 30 seconds."

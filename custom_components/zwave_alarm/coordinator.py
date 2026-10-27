@@ -42,6 +42,7 @@ from .coordinator_state import (
 )
 from .keypad_state import keypad_event_payload
 from .lock_mode_state import lock_event_payload
+from .rate_limit import mask_secrets, too_many_requests_message
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,10 +114,24 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
 
         return _remove
 
-    async def _call_client(self, call: Awaitable[T], what: str, who: str = "an administrator or installer") -> T:
-        """Await a client call, mapping its errors to Home Assistant ones (`what` names the rejected action)."""
+    async def _call_client(
+        self, call: Awaitable[T], what: str, who: str = "an administrator or installer", secrets: tuple[str | None, ...] = ()
+    ) -> T:
+        """Await a client call, mapping its errors to Home Assistant ones (`what` names the rejected action).
+
+        `secrets` are codes the call carried: the service's own message is masked of them before it can reach an error.
+        """
+
+        async def _masked() -> T:
+            try:
+                return await call
+            except api.ZwaveAlarmError as err:
+                if secrets and err.args:
+                    err.args = (mask_secrets(str(err.args[0]), secrets), *err.args[1:])
+                raise
+
         try:
-            return await call
+            return await _masked()
         except api.NotFound as err:
             raise ServiceValidationError(f"The Z-Wave Alarm service could not find the target: {err}") from err
         except api.BadRequest as err:
@@ -133,7 +148,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         except api.CodeLimit as err:
             raise ServiceValidationError("The alarm already holds the most codes it allows (256, duress codes included).") from err
         except api.TooManyRequests as err:
-            raise HomeAssistantError("The Z-Wave Alarm service is rate limiting requests. Try again shortly.") from err
+            raise HomeAssistantError(too_many_requests_message(err.retry_after)) from err
         except api.InvalidAuth as err:
             raise HomeAssistantError("The Z-Wave Alarm service refused the request.") from err
         except api.LockUnavailable as err:  # a CannotConnect subclass, so it has to come first
@@ -215,6 +230,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         return await self._call_client(
             api.async_set_user_code(self._session, self._host, self._port, None, user_id, code, confirm_code, secure=self._secure),
             "code",
+            secrets=(code, confirm_code),
         )
 
     async def async_clear_user_code(self, user_id: str) -> list[dict[str, Any]]:
@@ -227,6 +243,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         await self._call_client(
             api.async_set_duress_code(self._session, self._host, self._port, None, user_id, code, confirm_code, secure=self._secure),
             "duress code",
+            secrets=(code, confirm_code),
         )
 
     async def async_delete_duress_code(self, user_id: str) -> None:
@@ -243,6 +260,7 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
                 confirm_code=confirm_code, secure=self._secure,
             ),
             "user",
+            secrets=(code, confirm_code),
         )
 
     async def async_get_guest_schedules(self, user_id: str) -> list[dict[str, Any]]:

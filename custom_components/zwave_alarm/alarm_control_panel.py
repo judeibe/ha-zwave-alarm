@@ -44,6 +44,7 @@ from .const import CONF_SSL, DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
 from .coordinator_state import StreamState, merge_panel
 from .panel_state import describe_faulted, map_panel_mode, panel_attributes
+from .rate_limit import mask_secrets, too_many_requests_message
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -220,9 +221,7 @@ class ZwaveAlarmControlPanel(
                 "The Z-Wave Alarm service does not allow this action for the Home Assistant link."
             ) from err
         except api.TooManyRequests as err:
-            raise HomeAssistantError(
-                "The Z-Wave Alarm service is rate limiting requests. Try again shortly."
-            ) from err
+            raise HomeAssistantError(too_many_requests_message(err.retry_after)) from err
         except api.CommandRejected as err:
             raise HomeAssistantError(
                 "The Z-Wave Alarm service rejected this command in favor of a conflicting request."
@@ -232,7 +231,9 @@ class ZwaveAlarmControlPanel(
                 "Could not reach the Z-Wave Alarm service."
             ) from err
         except api.ZwaveAlarmError as err:
-            raise HomeAssistantError(f"The Z-Wave Alarm service rejected the request: {err}") from err
+            raise HomeAssistantError(
+                f"The Z-Wave Alarm service rejected the request: {mask_secrets(str(err), (kwargs.get('code'),))}"
+            ) from err
 
         current = (
             self.coordinator.data

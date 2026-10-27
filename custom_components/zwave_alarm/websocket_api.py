@@ -26,6 +26,7 @@ from .fault_state import faulted_sensors
 from .guest_schedule_state import GUEST_WEEKDAYS, InvalidSchedule, check_mode_schedule, check_schedule, normalize_time, schedule_fields
 from .lock_mode_state import MODES, sync_summary
 from .panel_state import map_panel_mode
+from .rate_limit import mask_secrets, too_many_requests_message
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,7 +135,11 @@ def _command(schema: dict[Any, Any]) -> Callable[[Callable[..., Awaitable[Any]]]
             except api.ZwaveAlarmError as err:
                 error_code = next((c for exc, c in _ERROR_CODES if isinstance(err, exc)), "unknown")
                 # str(err) is the service's message; request bodies (codes) are never part of it.
-                connection.send_error(msg["id"], error_code, str(err) or error_code)
+                # Whatever the service said, a code the caller sent is never echoed back.
+                message = mask_secrets(str(err), (msg.get("code"), msg.get("confirm_code")))
+                if isinstance(err, api.TooManyRequests):
+                    message = too_many_requests_message(err.retry_after)
+                connection.send_error(msg["id"], error_code, message or error_code)
             else:
                 connection.send_result(msg["id"], result)
 

@@ -84,6 +84,10 @@ class FakeService:
         self.keypad_settings_calls: list[dict] = []
         self.keypad_settings_status = 200
         self.arm_calls: list[dict] = []
+        self.disarm_status = 200
+        self.disarm_error_message = ""
+        self.retry_after: int | None = None
+        self.echo_code = False  # the code route's error message repeats the code it was sent
         self.sensor_calls: list[tuple] = []
         self.sensor_status = 200
         self.mode_schedule_calls: list[tuple] = []
@@ -124,6 +128,11 @@ class FakeService:
 
     async def disarm(self, request: web.Request) -> web.Response:
         self.disarm_calls.append(await request.json())
+        if self.disarm_status == 500:
+            return web.json_response({"error": {"code": "internal", "message": self.disarm_error_message}}, status=500)
+        if self.disarm_status == 429:
+            headers = {"Retry-After": str(self.retry_after)} if self.retry_after is not None else {}
+            return web.json_response({"error": {"code": "too_many_requests", "message": "slow down"}}, status=429, headers=headers)
         return web.json_response(self.disarm_response)
 
     async def chime(self, request: web.Request) -> web.Response:
@@ -175,7 +184,8 @@ class FakeService:
             return web.json_response({"lockSync": copy.deepcopy(self.lock_sync)})
         if self.code_status == 204:
             return web.Response(status=204)
-        return web.json_response({"error": {"code": self.code_error, "message": "nope"}}, status=self.code_status)
+        message = f"{body.get('code')} is not allowed" if self.echo_code else "nope"
+        return web.json_response({"error": {"code": self.code_error, "message": message}}, status=self.code_status)
 
     async def put_mode_settings(self, request: web.Request) -> web.Response:
         self._note(request)
@@ -1762,7 +1772,7 @@ async def test_code_actions_reject_a_code_that_is_not_four_digits_without_quotin
 
 @pytest.mark.parametrize(
     ("status", "error", "message"),
-    [(409, "code_in_use", "already uses that code"), (409, "code_limit", "most codes"), (429, "too_many_requests", "rate limiting")],
+    [(409, "code_in_use", "already uses that code"), (409, "code_limit", "most codes"), (429, "too_many_requests", "Too many attempts")],
 )
 async def test_code_actions_explain_a_refused_code(
     hass: HomeAssistant, service: FakeService, setup, status, error, message
@@ -2259,3 +2269,55 @@ async def test_chirps_and_volume_actions(hass: HomeAssistant, service: FakeServi
     assert service.keypad_settings_calls == [{"volume": 33}]
     with pytest.raises(vol.Invalid):
         await hass.services.async_call(DOMAIN, "set_keypad_volume", {"volume": 100}, blocking=True)
+
+
+async def test_a_429_on_disarm_says_how_long_to_wait_and_does_not_retry(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.disarm_status, service.retry_after = 429, 42
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError, match="Try again in 42 seconds"):
+        await hass.services.async_call(
+            "alarm_control_panel", "alarm_disarm", {"entity_id": "alarm_control_panel.zwave_alarm", "code": "9999"}, blocking=True
+        )
+    assert len(service.disarm_calls) == 1  # no retry loop against a rate limit
+
+
+async def test_a_429_without_retry_after_still_reads_clearly(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.disarm_status = 429
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises(HomeAssistantError, match="Wait a minute"):
+        await hass.services.async_call(
+            "alarm_control_panel", "alarm_disarm", {"entity_id": "alarm_control_panel.zwave_alarm", "code": "9999"}, blocking=True
+        )
+
+
+@pytest.mark.parametrize(("status", "error"), [(400, "bad_request"), (409, "code_in_use"), (409, "conflict")])
+@pytest.mark.parametrize("action", ["set_user_code", "set_duress_code"])
+async def test_a_service_message_that_repeats_a_code_never_reaches_an_error_or_the_log(
+    hass: HomeAssistant, service: FakeService, setup, caplog, action, status, error
+) -> None:
+    service.code_status, service.code_error, service.echo_code = status, error, True
+    await setup()
+    await _settle(hass, service)
+
+    with pytest.raises((HomeAssistantError, ServiceValidationError)) as err:
+        await hass.services.async_call(DOMAIN, action, {"user_id": "u1", "code": "4821", "confirm_code": "4821"}, blocking=True)
+
+    assert "4821" not in str(err.value) and "4821" not in caplog.text
+
+
+async def test_a_disarm_error_that_repeats_the_code_is_masked(hass: HomeAssistant, service: FakeService, setup, caplog) -> None:
+    service.disarm_response = {}  # the fake answers 200; make it fail instead
+    await setup()
+    await _settle(hass, service)
+    service.disarm_status = 500
+    service.disarm_error_message = "bad code 9999"
+
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            "alarm_control_panel", "alarm_disarm", {"entity_id": "alarm_control_panel.zwave_alarm", "code": "9999"}, blocking=True
+        )
+    assert "9999" not in str(err.value) and "9999" not in caplog.text
