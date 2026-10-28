@@ -882,6 +882,15 @@
         "bing_bong": "Bing bong",
         "doorbell": "Doorbell"
       }
+    },
+    "chime_sound": {
+      "options": {
+        "double_beep": "Double beep",
+        "guitar": "Guitar",
+        "wind_chimes": "Wind chimes",
+        "bing_bong": "Bing bong",
+        "doorbell": "Doorbell"
+      }
     }
   },
   "exceptions": {
