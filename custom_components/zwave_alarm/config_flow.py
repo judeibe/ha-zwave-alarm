@@ -12,13 +12,19 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigSubentryFlow, SubentryFlowResult
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from zwave_alarm_client import CannotConnect, async_validate_connection
+from homeassistant.helpers import selector
+
 from .const import CONF_SHOW_IN_SIDEBAR, CONF_SSL, DEFAULT_PORT, DOMAIN
+from .sensor_settings import (
+    SUBENTRY_SENSOR,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +46,12 @@ class ZwaveAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> ZwaveAlarmOptionsFlow:
         return ZwaveAlarmOptionsFlow()
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(cls, config_entry: config_entries.ConfigEntry) -> dict[str, type[ConfigSubentryFlow]]:
+        """One `sensor` subentry per Ring-supported sensor (quick entry is a sensor setting on the service)."""
+        return {SUBENTRY_SENSOR: SensorSubentryFlow}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the (only) step: collect connection details and validate them."""
@@ -77,4 +89,29 @@ class ZwaveAlarmOptionsFlow(config_entries.OptionsFlow):
         current = self.config_entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
         return self.async_show_form(
             step_id="init", data_schema=vol.Schema({vol.Required(CONF_SHOW_IN_SIDEBAR, default=current): bool})
+        )
+
+
+class SensorSubentryFlow(ConfigSubentryFlow):
+    """Add a supported sensor as its own entry (device); everything else is configured on that device."""
+
+    def _sensors(self) -> list[dict[str, Any]]:
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._get_entry().entry_id)
+        data = getattr(coordinator, "data", None)
+        return [s for z in (data.zones if data else []) for s in z["sensors"]]
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Pick which sensor to add. Its settings live as entities on the sensor's device, not in this flow."""
+        taken = {sub.unique_id for sub in self._get_entry().subentries.values()}
+        choices = {s["id"]: s["name"] for s in self._sensors() if s["id"] not in taken}
+        if not choices:
+            return self.async_abort(reason="no_supported_sensors")
+        if user_input is not None:
+            return self.async_create_entry(title=choices[user_input["sensor_id"]], data={}, unique_id=user_input["sensor_id"])
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {vol.Required("sensor_id"): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[selector.SelectOptionDict(value=k, label=v) for k, v in choices.items()]))}
+            ),
         )

@@ -35,6 +35,7 @@ from .coordinator import ZwaveAlarmCoordinator
 from .keypad import ZwaveAlarmKeypadEntity, async_add_keypad_entities
 from .keypad_state import keypad_is_online
 from .lock_state import lock_is_online
+from .sensor_settings import SUBENTRY_SENSOR, sensor_device_class, settings_from_sensor
 from .schlage import ZwaveAlarmLockEntity, async_add_lock_entities
 from .zone_state import zone_is_breached, zone_is_disarmed, zone_sensor_attributes
 
@@ -67,6 +68,9 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new_zones))
     async_add_entities([ZwaveAlarmSirenSoundingSensor(coordinator, entry)])
     _async_add_tamper_sensors(coordinator, entry, async_add_entities)
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == SUBENTRY_SENSOR and subentry.unique_id:
+            async_add_entities([ZwaveAlarmSubentrySensor(coordinator, entry, subentry)], config_subentry_id=subentry.subentry_id)
 
     async_add_keypad_entities(
         coordinator, entry, async_add_entities, lambda c, e, keypad: [ZwaveAlarmKeypadConnectivitySensor(c, e, keypad)]
@@ -239,3 +243,42 @@ class ZwaveAlarmTamperSensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySen
         sensor = self._sensor()
         # A service older than 3.3.0 never sends `tampered`: unknown, not "not tampered".
         return sensor.get("tampered") if sensor is not None and "tampered" in sensor else None
+
+
+class ZwaveAlarmSubentrySensor(CoordinatorEntity[ZwaveAlarmCoordinator], BinarySensorEntity):
+    """A supported sensor added as its own entry: on while breached, device class from its kind, settings as attributes."""
+
+    _attr_has_entity_name = True
+    _attr_name = None
+
+    def __init__(self, coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, subentry: Any) -> None:
+        super().__init__(coordinator)
+        self._sensor_id = subentry.unique_id
+        self._attr_unique_id = f"{entry.entry_id}_subentry_{self._sensor_id}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_sensor_{self._sensor_id}")}, name=subentry.title, via_device=(DOMAIN, entry.entry_id)
+        )
+
+    def _sensor(self) -> dict[str, Any] | None:
+        if self.coordinator.data is None:
+            return None
+        return next((s for z in self.coordinator.data.zones for s in z["sensors"] if s["id"] == self._sensor_id), None)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._sensor() is not None
+
+    @property
+    def device_class(self) -> BinarySensorDeviceClass:
+        sensor = self._sensor()
+        return BinarySensorDeviceClass(sensor_device_class(settings_from_sensor(sensor)["sensor_kind"] if sensor else None))
+
+    @property
+    def is_on(self) -> bool | None:
+        sensor = self._sensor()
+        return sensor["currentState"] == "breached" if sensor else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        sensor = self._sensor()
+        return settings_from_sensor(sensor) if sensor else {}

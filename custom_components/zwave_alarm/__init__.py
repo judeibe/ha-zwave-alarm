@@ -54,7 +54,7 @@ from .panel import async_register_panel, async_remove_panel
 from .schlage import async_can_remove_lock_device, async_setup_lock_lifecycle, lock_device_identifier
 from .websocket_api import async_register_commands
 
-PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "event", "lock", "number", "select", "sensor", "switch"]
+PLATFORMS: list[str] = ["alarm_control_panel", "binary_sensor", "button", "event", "lock", "number", "select", "sensor", "switch", "text"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 

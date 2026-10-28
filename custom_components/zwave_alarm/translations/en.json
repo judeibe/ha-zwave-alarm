@@ -114,6 +114,15 @@
       },
       "chirps_away": {
         "name": "Chirps when armed away"
+      },
+      "sensor_is_interior": {
+        "name": "Interior sensor"
+      },
+      "sensor_chime_enabled": {
+        "name": "Chime"
+      },
+      "sensor_quick_exit_enabled": {
+        "name": "Quick exit"
       }
     },
     "select": {
@@ -180,9 +189,17 @@
           "unlock": "Unlock"
         }
       },
-      "chirp_tone": {
+      "sensor_sensor_kind": {
+        "name": "Kind",
         "state": {
-          "none": "None",
+          "door": "Door",
+          "window": "Window",
+          "interior": "Interior"
+        }
+      },
+      "sensor_chime_sound": {
+        "name": "Chime sound",
+        "state": {
           "double_beep": "Double beep",
           "guitar": "Guitar",
           "wind_chimes": "Wind chimes",
@@ -249,6 +266,16 @@
       },
       "siren_duration": {
         "name": "Duration"
+      }
+    },
+    "text": {
+      "sensor_entryway": {
+        "name": "Entryway"
+      }
+    },
+    "button": {
+      "sensor_quick_exit": {
+        "name": "Quick exit"
       }
     }
   },
@@ -773,15 +800,6 @@
     }
   },
   "selector": {
-    "chime_sound": {
-      "options": {
-        "double_beep": "Double beep",
-        "guitar": "Guitar",
-        "wind_chimes": "Wind chimes",
-        "bing_bong": "Bing bong",
-        "doorbell": "Doorbell"
-      }
-    },
     "schedule_type": {
       "options": {
         "weekday": "Weekday",
@@ -864,6 +882,15 @@
         "bing_bong": "Bing bong",
         "doorbell": "Doorbell"
       }
+    },
+    "chime_sound": {
+      "options": {
+        "double_beep": "Double beep",
+        "guitar": "Guitar",
+        "wind_chimes": "Wind chimes",
+        "bing_bong": "Bing bong",
+        "doorbell": "Doorbell"
+      }
     }
   },
   "exceptions": {
@@ -906,6 +933,27 @@
           "show_in_sidebar": "Show the configuration panel in the sidebar"
         }
       }
+    }
+  },
+  "config_subentries": {
+    "sensor": {
+      "title": "Sensor",
+      "initiate_flow": {
+        "user": "Add sensor"
+      },
+      "step": {
+        "user": {
+          "title": "Add a sensor",
+          "description": "Pick a Ring-supported sensor to add. Set its chime, kind, entryway and quick exit from its device page.",
+          "data": {
+            "sensor_id": "Sensor"
+          }
+        }
+      },
+      "abort": {
+        "no_supported_sensors": "No supported sensors are left to add."
+      },
+      "entry_type": "Sensor"
     }
   }
 }
