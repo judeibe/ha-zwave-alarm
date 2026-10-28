@@ -2321,3 +2321,42 @@ async def test_a_disarm_error_that_repeats_the_code_is_masked(hass: HomeAssistan
             "alarm_control_panel", "alarm_disarm", {"entity_id": "alarm_control_panel.zwave_alarm", "code": "9999"}, blocking=True
         )
     assert "9999" not in str(err.value) and "9999" not in caplog.text
+
+
+async def test_sensor_subentry_flow_adds_a_sensor_with_its_settings(hass: HomeAssistant, service: FakeService, setup) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    result = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
+    assert result["step_id"] == "user"
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"sensor_id": "s1"})
+    assert result["step_id"] == "settings"
+    settings = {"sensor_kind": "window", "entryway": "Front", "is_interior": False, "quick_entry_supported": True, "chime_enabled": True, "chime_sound": "doorbell"}
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], settings)
+    assert result["type"] == "create_entry"
+    assert service.sensor_calls[-1] == (
+        "s1", {"sensorKind": "window", "entryway": "Front", "isInterior": False, "quickEntrySupported": True, "chimeEnabled": True, "chimeSound": "doorbell"}
+    )
+    await hass.async_block_till_done()
+    sub = next(iter(entry.subentries.values()))
+    assert sub.unique_id == "s1" and sub.data == settings
+
+    # Already added: nothing left to offer.
+    again = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
+    assert again["type"] == "abort" and again["reason"] == "no_supported_sensors"
+
+
+async def test_unsupported_device_error_keeps_the_form_open(hass: HomeAssistant, service: FakeService, setup, monkeypatch) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+
+    async def refuse(*a, **k):
+        raise api.UnsupportedDevice("nope")
+
+    monkeypatch.setattr(api, "async_update_sensor", refuse)
+    result = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"sensor_id": "s1"})
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"sensor_kind": "door", "is_interior": False, "quick_entry_supported": False, "chime_enabled": True, "chime_sound": "guitar"}
+    )
+    assert result["type"] == "form" and result["errors"] == {"base": "rejected"}

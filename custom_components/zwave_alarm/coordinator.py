@@ -147,6 +147,8 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise ServiceValidationError("Another person already uses that code. Choose a different one.") from err
         except api.CodeLimit as err:
             raise ServiceValidationError("The alarm already holds the most codes it allows (256, duress codes included).") from err
+        except (api.UnsupportedDevice, api.CategoryMismatch) as err:
+            raise ServiceValidationError(f"Ring does not support that device or category for the {what}: {err}") from err
         except api.TooManyRequests as err:
             raise HomeAssistantError(too_many_requests_message(err.retry_after)) from err
         except api.InvalidAuth as err:
@@ -346,6 +348,17 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         sensor = await self._call_client(
             api.async_update_sensor(self._session, self._host, self._port, None, sensor_id, {"chirpTone": tone}, secure=self._secure),
             "chirp tone",
+            "an administrator",
+        )
+        current = self.data if self.data is not None else StreamState(panel=None, zones=[])
+        self.async_set_updated_data(apply_event(current, {"type": "sensor.updated", "sensor": sensor}))
+        return sensor
+
+    async def async_update_sensor_settings(self, sensor_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        """Write a sensor's chime / kind / entryway fields (wire names, see sensor_settings.to_wire) via `PATCH /sensors/{id}`."""
+        sensor = await self._call_client(
+            api.async_update_sensor(self._session, self._host, self._port, None, sensor_id, changes, secure=self._secure),
+            "sensor setting",
             "an administrator",
         )
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])

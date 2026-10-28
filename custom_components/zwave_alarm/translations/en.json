@@ -864,6 +864,13 @@
         "bing_bong": "Bing bong",
         "doorbell": "Doorbell"
       }
+    },
+    "sensor_kind": {
+      "options": {
+        "door": "Door",
+        "window": "Window",
+        "interior": "Interior"
+      }
     }
   },
   "exceptions": {
@@ -905,6 +912,65 @@
         "data": {
           "show_in_sidebar": "Show the configuration panel in the sidebar"
         }
+      }
+    }
+  },
+  "config_subentries": {
+    "sensor": {
+      "title": "Sensor",
+      "initiate_flow": {
+        "user": "Add sensor"
+      },
+      "entry_type": "Sensor",
+      "step": {
+        "user": {
+          "title": "Add a sensor",
+          "description": "Pick a Ring-supported sensor to add.",
+          "data": {
+            "sensor_id": "Sensor"
+          }
+        },
+        "settings": {
+          "title": "Settings for {sensor}",
+          "data": {
+            "sensor_kind": "Kind",
+            "entryway": "Entryway",
+            "is_interior": "Interior sensor",
+            "chime_enabled": "Chime",
+            "chime_sound": "Chime sound",
+            "quick_entry_supported": "Quick entry supported"
+          },
+          "data_description": {
+            "entryway": "Which entryway this sensor guards, e.g. Front door.",
+            "is_interior": "Interior sensors are bypassed when armed Home.",
+            "quick_entry_supported": "The lock at this entryway supports quick entry."
+          }
+        },
+        "reconfigure": {
+          "title": "Settings for {sensor}",
+          "data": {
+            "sensor_kind": "Kind",
+            "entryway": "Entryway",
+            "is_interior": "Interior sensor",
+            "chime_enabled": "Chime",
+            "chime_sound": "Chime sound",
+            "quick_entry_supported": "Quick entry supported"
+          },
+          "data_description": {
+            "entryway": "Which entryway this sensor guards, e.g. Front door.",
+            "is_interior": "Interior sensors are bypassed when armed Home.",
+            "quick_entry_supported": "The lock at this entryway supports quick entry."
+          }
+        }
+      },
+      "error": {
+        "save_failed": "The Z-Wave Alarm service did not accept these settings.",
+        "rejected": "The service rejected these settings (Ring does not support this device or category)."
+      },
+      "abort": {
+        "no_supported_sensors": "No supported sensors are left to add.",
+        "sensor_gone": "The service no longer lists this sensor.",
+        "reconfigure_successful": "Sensor updated."
       }
     }
   }
