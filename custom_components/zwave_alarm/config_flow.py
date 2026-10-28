@@ -19,17 +19,11 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from zwave_alarm_client import CannotConnect, async_validate_connection
-from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import selector
 
 from .const import CONF_SHOW_IN_SIDEBAR, CONF_SSL, DEFAULT_PORT, DOMAIN
 from .sensor_settings import (
-    CHIME_SOUNDS,
-    SENSOR_KINDS,
     SUBENTRY_SENSOR,
-    has_chime,
-    settings_from_sensor,
-    to_wire,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,29 +92,8 @@ class ZwaveAlarmOptionsFlow(config_entries.OptionsFlow):
         )
 
 
-def _select(options: list[str], key: str) -> selector.SelectSelector:
-    return selector.SelectSelector(
-        selector.SelectSelectorConfig(options=options, translation_key=key, mode=selector.SelectSelectorMode.DROPDOWN)
-    )
-
-
-def _sensor_schema(defaults: dict[str, Any], chime: bool) -> vol.Schema:
-    fields: dict[Any, Any] = {
-        vol.Required("sensor_kind", default=defaults["sensor_kind"]): _select(SENSOR_KINDS, "sensor_kind"),
-        vol.Optional("entryway", description={"suggested_value": defaults["entryway"]}): vol.All(str, vol.Length(max=60)),
-        vol.Required("is_interior", default=defaults["is_interior"]): bool,
-        vol.Required("quick_entry_supported", default=defaults["quick_entry_supported"]): bool,
-    }
-    if chime:  # life-safety sensors have no chime and the service rejects the fields
-        fields[vol.Required("chime_enabled", default=defaults["chime_enabled"])] = bool
-        fields[vol.Required("chime_sound", default=defaults["chime_sound"])] = _select(CHIME_SOUNDS, "chime_sound")
-    return vol.Schema(fields)
-
-
 class SensorSubentryFlow(ConfigSubentryFlow):
-    """Add a supported sensor as its own entry, or reconfigure its chime, kind (door/window/interior) and entryway."""
-
-    _sensor_id: str | None = None
+    """Add a supported sensor as its own entry (device); everything else is configured on that device."""
 
     def _sensors(self) -> list[dict[str, Any]]:
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._get_entry().entry_id)
@@ -128,13 +101,13 @@ class SensorSubentryFlow(ConfigSubentryFlow):
         return [s for z in (data.zones if data else []) for s in z["sensors"]]
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Pick which sensor to add. Its settings live as entities on the sensor's device, not in this flow."""
         taken = {sub.unique_id for sub in self._get_entry().subentries.values()}
         choices = {s["id"]: s["name"] for s in self._sensors() if s["id"] not in taken}
         if not choices:
             return self.async_abort(reason="no_supported_sensors")
         if user_input is not None:
-            self._sensor_id = user_input["sensor_id"]
-            return await self.async_step_settings()
+            return self.async_create_entry(title=choices[user_input["sensor_id"]], data={}, unique_id=user_input["sensor_id"])
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
@@ -142,32 +115,3 @@ class SensorSubentryFlow(ConfigSubentryFlow):
                     options=[selector.SelectOptionDict(value=k, label=v) for k, v in choices.items()]))}
             ),
         )
-
-    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        sensor = next((s for s in self._sensors() if s["id"] == self._sensor_id), None)
-        if sensor is None:
-            return self.async_abort(reason="sensor_gone")
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            coordinator = self.hass.data[DOMAIN][self._get_entry().entry_id]
-            try:
-                await coordinator.async_update_sensor_settings(sensor["id"], to_wire(user_input))
-            except ServiceValidationError:  # incl. UnsupportedDevice / CategoryMismatch, mapped by the coordinator
-                errors["base"] = "rejected"
-            except Exception:  # the service rejected the change or is unreachable; keep the form open
-                _LOGGER.debug("Could not save sensor settings", exc_info=True)
-                errors["base"] = "save_failed"
-            else:
-                if self.source == config_entries.SOURCE_RECONFIGURE:
-                    return self.async_update_and_abort(
-                        self._get_entry(), self._get_reconfigure_subentry(), title=sensor["name"], data=user_input
-                    )
-                return self.async_create_entry(title=sensor["name"], data=user_input, unique_id=sensor["id"])
-        defaults = {**settings_from_sensor(sensor), **(user_input or {})}
-        return self.async_show_form(
-            step_id="settings", data_schema=_sensor_schema(defaults, has_chime(sensor)), errors=errors, description_placeholders={"sensor": sensor["name"]}
-        )
-
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        self._sensor_id = self._get_reconfigure_subentry().unique_id
-        return await self.async_step_settings(user_input)

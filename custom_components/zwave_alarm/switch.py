@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .sensor_config import SETTING_SWITCHES, ZwaveAlarmSensorSetting, async_add_sensor_settings
 from .lock_state import lock_supports
 from .lock_mode_state import MODE_SWITCHES, mode_settings
 from .schlage import ZwaveAlarmLockModeEntity, ZwaveAlarmLockSettingEntity, async_add_lock_entities
@@ -31,6 +32,10 @@ SWITCHES = (
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_sensor_settings(
+        hass, entry, async_add_entities,
+        lambda c, e, sub, chime: [ZwaveAlarmSensorSwitch(c, e, sub, key) for key, chime_only in SETTING_SWITCHES if chime or not chime_only],
+    )
 
     def _switches(coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> list[ZwaveAlarmLockSwitch]:
         return [ZwaveAlarmLockSwitch(coordinator, entry, lock, *d) for d in SWITCHES if lock_supports(lock, d[0])]
@@ -263,3 +268,17 @@ class ZwaveAlarmChirpSwitch(CoordinatorEntity[ZwaveAlarmCoordinator], SwitchEnti
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_update_modes({self._mode: {"chirpsEnabled": False}})
+
+
+class ZwaveAlarmSensorSwitch(ZwaveAlarmSensorSetting, SwitchEntity):
+    """A boolean sensor setting: interior, chime on/off or quick exit/entry."""
+
+    @property
+    def is_on(self) -> bool | None:
+        return self._value()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._write(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._write(False)

@@ -15,6 +15,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import ZwaveAlarmCoordinator
+from .sensor_config import ZwaveAlarmSensorSetting, async_add_sensor_settings
+from .sensor_settings import CHIME_SOUNDS, SENSOR_KINDS
 from .lock_state import (
     ALARM_MODES,
     SENSITIVITY_OPTIONS,
@@ -35,6 +37,10 @@ SENSITIVITY_SELECTS = (
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: ZwaveAlarmCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_sensor_settings(
+        hass, entry, async_add_entities,
+        lambda c, e, sub, chime: [ZwaveAlarmSensorKindSelect(c, e, sub, "sensor_kind"), *([ZwaveAlarmChimeSoundSelect(c, e, sub, "chime_sound")] if chime else [])],
+    )
 
     def _selects(coordinator: ZwaveAlarmCoordinator, entry: ConfigEntry, lock: dict[str, Any]) -> list[SelectEntity]:
         selects: list[SelectEntity] = []
@@ -168,3 +174,29 @@ class ZwaveAlarmChirpToneSelect(CoordinatorEntity[ZwaveAlarmCoordinator], Select
 
     async def async_select_option(self, option: str) -> None:
         await self.coordinator.async_set_chirp_tone(self._sensor_id, option)
+
+
+class ZwaveAlarmSensorKindSelect(ZwaveAlarmSensorSetting, SelectEntity):
+    """What the sensor watches: a door, a window or the interior."""
+
+    _attr_options = SENSOR_KINDS
+
+    @property
+    def current_option(self) -> str | None:
+        return self._value()
+
+    async def async_select_option(self, option: str) -> None:
+        await self._write(option)
+
+
+class ZwaveAlarmChimeSoundSelect(ZwaveAlarmSensorSetting, SelectEntity):
+    """Which chime plays when the sensor trips (the chime switch turns it on and off)."""
+
+    _attr_options = CHIME_SOUNDS
+
+    @property
+    def current_option(self) -> str | None:
+        return self._value()
+
+    async def async_select_option(self, option: str) -> None:
+        await self._write(option)

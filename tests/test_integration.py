@@ -2323,40 +2323,74 @@ async def test_a_disarm_error_that_repeats_the_code_is_masked(hass: HomeAssistan
     assert "9999" not in str(err.value) and "9999" not in caplog.text
 
 
-async def test_sensor_subentry_flow_adds_a_sensor_with_its_settings(hass: HomeAssistant, service: FakeService, setup) -> None:
-    entry = await setup()
-    await _settle(hass, service)
-
+async def _add_sensor_subentry(hass: HomeAssistant, service: FakeService, entry: MockConfigEntry, sensor_id: str = "s1") -> None:
     result = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
     assert result["step_id"] == "user"
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"sensor_id": "s1"})
-    assert result["step_id"] == "settings"
-    settings = {"sensor_kind": "window", "entryway": "Front", "is_interior": False, "quick_entry_supported": True, "chime_enabled": True, "chime_sound": "doorbell"}
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], settings)
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"sensor_id": sensor_id})
     assert result["type"] == "create_entry"
-    assert service.sensor_calls[-1] == (
-        "s1", {"sensorKind": "window", "entryway": "Front", "isInterior": False, "quickEntrySupported": True, "chimeEnabled": True, "chimeSound": "doorbell"}
-    )
     await hass.async_block_till_done()
-    sub = next(iter(entry.subentries.values()))
-    assert sub.unique_id == "s1" and sub.data == settings
+    await _settle(hass, service)  # the entry reloads to pick up the new subentry
 
-    # Already added: nothing left to offer.
+
+def _setting_entity(hass: HomeAssistant, entry: MockConfigEntry, setting: str) -> str | None:
+    from homeassistant.helpers import entity_registry as er
+
+    return next(
+        (e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id) if e.unique_id.endswith(f"_subentry_s1_{setting}")),
+        None,
+    )
+
+
+async def test_sensor_subentry_only_picks_the_sensor_and_settings_are_device_entities(hass: HomeAssistant, service: FakeService, setup) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    sub = next(iter(entry.subentries.values()))
+    assert sub.unique_id == "s1" and sub.data == {}
+    assert service.sensor_calls == []  # adding changes nothing on the service
+
+    for setting in ("sensor_kind", "entryway", "is_interior", "chime_enabled", "chime_sound", "quick_entry_supported"):
+        assert _setting_entity(hass, entry, setting), setting
+
     again = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
     assert again["type"] == "abort" and again["reason"] == "no_supported_sensors"
 
 
-async def test_unsupported_device_error_keeps_the_form_open(hass: HomeAssistant, service: FakeService, setup, monkeypatch) -> None:
+async def test_setting_entities_patch_the_service_and_read_back(hass: HomeAssistant, service: FakeService, setup) -> None:
     entry = await setup()
     await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    ent = lambda k: _setting_entity(hass, entry, k)  # noqa: E731
 
-    async def refuse(*a, **k):
-        raise api.UnsupportedDevice("nope")
+    await hass.services.async_call("select", "select_option", {"entity_id": ent("sensor_kind"), "option": "window"}, blocking=True)
+    await hass.services.async_call("text", "set_value", {"entity_id": ent("entryway"), "value": " Front "}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": ent("chime_enabled")}, blocking=True)
+    await hass.services.async_call("select", "select_option", {"entity_id": ent("chime_sound"), "option": "doorbell"}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": ent("quick_entry_supported")}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": ent("is_interior")}, blocking=True)
+    assert [c for _, c in service.sensor_calls] == [
+        {"sensorKind": "window"}, {"entryway": "Front"}, {"chimeEnabled": True}, {"chimeSound": "doorbell"},
+        {"quickEntrySupported": True}, {"isInterior": True},
+    ]
+    assert hass.states.get(ent("sensor_kind")).state == "window"
+    assert hass.states.get(ent("entryway")).state == "Front"
+    assert hass.states.get(ent("chime_sound")).state == "doorbell"
+    assert hass.states.get(ent("quick_entry_supported")).state == "on"
 
-    monkeypatch.setattr(api, "async_update_sensor", refuse)
-    result = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"sensor_id": "s1"})
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"], {"sensor_kind": "door", "is_interior": False, "quick_entry_supported": False, "chime_enabled": True, "chime_sound": "guitar"}
-    )
-    assert result["type"] == "form" and result["errors"] == {"base": "rejected"}
+
+async def test_a_refused_setting_change_raises(hass: HomeAssistant, service: FakeService, setup) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    service.sensor_status = 403
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": _setting_entity(hass, entry, "chime_enabled")}, blocking=True)
+
+
+async def test_life_safety_sensor_gets_no_chime_entities(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.zones[0]["sensors"][0]["category"] = "life-safety"
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    assert _setting_entity(hass, entry, "entryway")
+    assert _setting_entity(hass, entry, "chime_enabled") is None and _setting_entity(hass, entry, "chime_sound") is None
