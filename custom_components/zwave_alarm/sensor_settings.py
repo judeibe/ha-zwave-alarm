@@ -22,7 +22,7 @@ SENSOR_WIRE_FIELDS = {
     "sensor_kind": "sensorKind",
     "entryway": "entryway",
     "is_interior": "isInterior",
-    "quick_entry_supported": "quickEntrySupported",
+    "quick_exit_enabled": "quickExitEnabled",
 }
 CHIME_FIELDS = ("chime_enabled", "chime_sound")  # the service rejects these on life-safety sensors (400)
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -31,13 +31,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "sensor_kind": "door",
     "entryway": "",
     "is_interior": False,
-    "quick_entry_supported": False,
+    "quick_exit_enabled": False,
 }
 
 
 def settings_from_sensor(sensor: dict[str, Any]) -> dict[str, Any]:
     """The sensor's current settings, falling back to the legacy `chirpTone`/`placement` fields on an older service."""
     settings = {key: sensor[wire] for key, wire in SENSOR_WIRE_FIELDS.items() if sensor.get(wire) is not None}
+    if "quick_exit_enabled" not in settings and sensor.get("quickEntrySupported") is not None:  # a service older than quick exit
+        settings["quick_exit_enabled"] = sensor["quickEntrySupported"]
     tone = sensor.get("chirpTone")
     if "chime_sound" not in settings and tone not in (None, "none"):
         settings["chime_sound"] = tone

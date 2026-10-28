@@ -140,6 +140,10 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
             raise HomeAssistantError(
                 f"The Z-Wave Alarm service only lets {who} make this {what} change."
             ) from err
+        except api.QuickExitUnavailable as err:  # Conflict subclasses: must precede the generic handler
+            raise ServiceValidationError("Quick exit works only while the panel is armed Home and the sensor is closed, not tampered and online.") from err
+        except api.QuickExitDisabled as err:
+            raise ServiceValidationError("Quick exit is off for this sensor. Turn on its Quick exit setting first.") from err
         except api.ScheduleConflict as err:  # a Conflict subclass: must precede the generic handler
             other = f" ({err.conflicts_with})" if err.conflicts_with else ""
             raise ServiceValidationError(f"Another enabled schedule{other} would run at the same time. Change the time or days, or turn the other off.") from err
@@ -364,6 +368,14 @@ class ZwaveAlarmCoordinator(DataUpdateCoordinator[StreamState]):
         current = self.data if self.data is not None else StreamState(panel=None, zones=[])
         self.async_set_updated_data(apply_event(current, {"type": "sensor.updated", "sensor": sensor}))
         return sensor
+
+    async def async_quick_exit(self, sensor_id: str) -> dict[str, Any]:
+        """Open the sensor's short quick-exit window (`POST /sensors/{id}/quick-exit`); returns `{sensorId, expiresAt}`."""
+        return await self._call_client(
+            api.async_quick_exit(self._session, self._host, self._port, None, sensor_id, secure=self._secure),
+            "quick exit",
+            "an administrator or installer",
+        )
 
     async def async_update_modes(self, changes: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
         """Write per-mode entry/exit delays via `PATCH /api/v1/modes` (0-180 s) and publish the returned config at once."""

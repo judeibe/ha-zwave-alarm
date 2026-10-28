@@ -23,3 +23,10 @@ def test_to_wire_maps_and_forces_interior():
 
 def test_device_class():
     assert [sensor_device_class(k) for k in ("door", "window", "interior", None)] == ["door", "window", "motion", "door"]
+
+
+def test_quick_exit_field_and_legacy_alias():
+    assert to_wire({"quick_exit_enabled": True}) == {"quickExitEnabled": True}
+    assert settings_from_sensor({"quickExitEnabled": True})["quick_exit_enabled"] is True
+    assert settings_from_sensor({"quickEntrySupported": True})["quick_exit_enabled"] is True
+    assert settings_from_sensor({"quickEntrySupported": True, "quickExitEnabled": False})["quick_exit_enabled"] is False

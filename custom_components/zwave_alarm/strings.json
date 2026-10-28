@@ -121,7 +121,7 @@
       "sensor_chime_enabled": {
         "name": "Chime"
       },
-      "sensor_quick_entry_supported": {
+      "sensor_quick_exit_enabled": {
         "name": "Quick exit"
       }
     },
@@ -187,16 +187,6 @@
           "none": "Do nothing",
           "lock": "Lock",
           "unlock": "Unlock"
-        }
-      },
-      "chirp_tone": {
-        "state": {
-          "none": "None",
-          "double_beep": "Double beep",
-          "guitar": "Guitar",
-          "wind_chimes": "Wind chimes",
-          "bing_bong": "Bing bong",
-          "doorbell": "Doorbell"
         }
       },
       "sensor_sensor_kind": {
@@ -281,6 +271,11 @@
     "text": {
       "sensor_entryway": {
         "name": "Entryway"
+      }
+    },
+    "button": {
+      "sensor_quick_exit": {
+        "name": "Quick exit"
       }
     }
   },
@@ -940,7 +935,7 @@
       "step": {
         "user": {
           "title": "Add a sensor",
-          "description": "Pick a Ring-supported sensor to add. Set its chime, kind and entryway from its device page.",
+          "description": "Pick a Ring-supported sensor to add. Set its chime, kind, entryway and quick exit from its device page.",
           "data": {
             "sensor_id": "Sensor"
           }

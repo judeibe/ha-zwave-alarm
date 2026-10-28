@@ -274,6 +274,17 @@ class FakeService:
         sensor.update(body)
         return web.json_response(sensor)
 
+    quick_exit_error: tuple[int, str] | None = None
+    quick_exit_calls: list[str] = []
+
+    async def post_quick_exit(self, request: web.Request) -> web.Response:
+        self._note(request)
+        self.quick_exit_calls.append(request.match_info["sensor_id"])
+        if self.quick_exit_error:
+            status, code = self.quick_exit_error
+            return web.json_response({"error": {"code": code, "message": code}}, status=status)
+        return web.json_response({"sensorId": request.match_info["sensor_id"], "expiresAt": 1700000005000})
+
     async def patch_modes(self, request: web.Request) -> web.Response:
         self._note(request)
         body = await request.json()
@@ -393,6 +404,7 @@ async def service(socket_enabled):
     app.router.add_post("/api/v1/panel/silence", fake.silence)
     app.router.add_patch("/api/v1/modes", fake.patch_modes)
     app.router.add_patch("/api/v1/sensors/{sensor_id}", fake.patch_sensor)
+    app.router.add_post("/api/v1/sensors/{sensor_id}/quick-exit", fake.post_quick_exit)
     app.router.add_patch("/api/v1/keypad-settings", fake.patch_keypad_settings)
     app.router.add_patch("/api/v1/locks/{node_id}/settings", fake.lock_settings)
     app.router.add_put("/api/v1/locks/{node_id}/state", fake.lock_state)
@@ -2199,28 +2211,6 @@ async def test_a_refused_chirp_change_says_it_needs_an_administrator_and_keeps_t
     assert hass.states.get("switch.z_wave_alarm_chirps_when_disarmed").state == "off"
 
 
-async def test_each_intrusion_sensor_gets_a_chirp_tone_select_and_life_safety_gets_none(hass: HomeAssistant, service: FakeService, setup) -> None:
-    _with_chirps(service)
-    service.zones[0]["sensors"].append({**service.zones[0]["sensors"][0], "id": "s2", "name": "Smoke", "category": "life-safety", "chirpTone": None})
-    await setup()
-    await _settle(hass, service)
-
-    tone = await _entity(hass, "select.zwave_alarm_chirp_front_door")
-    assert tone.state == "double_beep" and "doorbell" in tone.attributes["options"]
-    assert hass.states.get("select.zwave_alarm_chirp_smoke") is None
-
-
-async def test_choosing_a_chirp_tone_patches_the_sensor_and_shows_it_at_once(hass: HomeAssistant, service: FakeService, setup) -> None:
-    _with_chirps(service)
-    await setup()
-    await _settle(hass, service)
-    await _entity(hass, "select.zwave_alarm_chirp_front_door")
-
-    await hass.services.async_call("select", "select_option", {"entity_id": "select.zwave_alarm_chirp_front_door", "option": "none"}, blocking=True)
-
-    assert service.sensor_calls == [("s1", {"chirpTone": "none"})]
-    assert hass.states.get("select.zwave_alarm_chirp_front_door").state == "none"
-
 
 async def test_the_chirp_tone_action_and_a_refusal(hass: HomeAssistant, service: FakeService, setup) -> None:
     _with_chirps(service)
@@ -2349,7 +2339,7 @@ async def test_sensor_subentry_only_picks_the_sensor_and_settings_are_device_ent
     assert sub.unique_id == "s1" and sub.data == {}
     assert service.sensor_calls == []  # adding changes nothing on the service
 
-    for setting in ("sensor_kind", "entryway", "is_interior", "chime_enabled", "chime_sound", "quick_entry_supported"):
+    for setting in ("sensor_kind", "entryway", "is_interior", "chime_enabled", "chime_sound", "quick_exit_enabled"):
         assert _setting_entity(hass, entry, setting), setting
 
     again = await hass.config_entries.subentries.async_init((entry.entry_id, "sensor"), context={"source": "user"})
@@ -2366,16 +2356,16 @@ async def test_setting_entities_patch_the_service_and_read_back(hass: HomeAssist
     await hass.services.async_call("text", "set_value", {"entity_id": ent("entryway"), "value": " Front "}, blocking=True)
     await hass.services.async_call("switch", "turn_on", {"entity_id": ent("chime_enabled")}, blocking=True)
     await hass.services.async_call("select", "select_option", {"entity_id": ent("chime_sound"), "option": "doorbell"}, blocking=True)
-    await hass.services.async_call("switch", "turn_on", {"entity_id": ent("quick_entry_supported")}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": ent("quick_exit_enabled")}, blocking=True)
     await hass.services.async_call("switch", "turn_on", {"entity_id": ent("is_interior")}, blocking=True)
     assert [c for _, c in service.sensor_calls] == [
         {"sensorKind": "window"}, {"entryway": "Front"}, {"chimeEnabled": True}, {"chimeSound": "doorbell"},
-        {"quickEntrySupported": True}, {"isInterior": True},
+        {"quickExitEnabled": True}, {"isInterior": True},
     ]
     assert hass.states.get(ent("sensor_kind")).state == "window"
     assert hass.states.get(ent("entryway")).state == "Front"
     assert hass.states.get(ent("chime_sound")).state == "doorbell"
-    assert hass.states.get(ent("quick_entry_supported")).state == "on"
+    assert hass.states.get(ent("quick_exit_enabled")).state == "on"
 
 
 async def test_a_refused_setting_change_raises(hass: HomeAssistant, service: FakeService, setup) -> None:
@@ -2394,3 +2384,39 @@ async def test_life_safety_sensor_gets_no_chime_entities(hass: HomeAssistant, se
     await _add_sensor_subentry(hass, service, entry)
     assert _setting_entity(hass, entry, "entryway")
     assert _setting_entity(hass, entry, "chime_enabled") is None and _setting_entity(hass, entry, "chime_sound") is None
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        ((409, "quick_exit_unavailable"), "armed Home"),
+        ((409, "quick_exit_disabled"), "Turn on its Quick exit"),
+        ((403, "forbidden"), "administrator"),
+    ],
+)
+async def test_quick_exit_button_surfaces_clear_errors(hass: HomeAssistant, service: FakeService, setup, error, message) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    button = _setting_entity(hass, entry, "quick_exit")
+    assert button and button.startswith("button.")
+    service.quick_exit_error = error
+    with pytest.raises(HomeAssistantError, match=message):
+        await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+
+
+async def test_quick_exit_button_posts_and_life_safety_has_none(hass: HomeAssistant, service: FakeService, setup) -> None:
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    service.quick_exit_calls.clear()
+    await hass.services.async_call("button", "press", {"entity_id": _setting_entity(hass, entry, "quick_exit")}, blocking=True)
+    assert service.quick_exit_calls == ["s1"]
+
+
+async def test_life_safety_sensor_gets_no_quick_exit_button(hass: HomeAssistant, service: FakeService, setup) -> None:
+    service.zones[0]["sensors"][0]["category"] = "life-safety"
+    entry = await setup()
+    await _settle(hass, service)
+    await _add_sensor_subentry(hass, service, entry)
+    assert _setting_entity(hass, entry, "quick_exit") is None

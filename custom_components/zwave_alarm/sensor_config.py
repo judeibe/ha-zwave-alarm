@@ -22,7 +22,7 @@ from .coordinator import ZwaveAlarmCoordinator
 from .sensor_settings import SENSOR_WIRE_FIELDS, SUBENTRY_SENSOR, has_chime, settings_from_sensor, to_wire
 
 # (setting key, chime-only)
-SETTING_SWITCHES = (("is_interior", False), ("chime_enabled", True), ("quick_entry_supported", False))
+SETTING_SWITCHES = (("is_interior", False), ("chime_enabled", True), ("quick_exit_enabled", False))
 
 
 class ZwaveAlarmSensorSetting(CoordinatorEntity[ZwaveAlarmCoordinator]):
